@@ -1,0 +1,8 @@
+<svg width="360" height="96" viewBox="0 0 360 96" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="AI Frontend Monitor logo">
+  <path d="M8 51H28L38 28L50.5 72L63 18L73 51H92" stroke="#2563EB" stroke-width="7.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="92" cy="51" r="6.25" fill="#14B8A6"/>
+  <path d="M25 78H75" stroke="#B7C7DA" stroke-width="5.5" stroke-linecap="round"/>
+
+  <text x="116" y="45" fill="#0F172A" font-family="Inter, PingFang SC, Microsoft YaHei, Arial, sans-serif" font-size="27" font-weight="720">前端性能监控</text>
+  <text x="117" y="70" fill="#64748B" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="600" letter-spacing="1.4">AI FRONTEND MONITOR</text>
+</svg>

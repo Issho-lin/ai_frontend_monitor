@@ -1,0 +1,19 @@
+{
+  "name": "ai-frontend-monitor",
+  "version": "1.0.0",
+  "description": "",
+  "private": true,
+  "packageManager": "pnpm@11.7.0",
+  "scripts": {
+    "dev:console": "pnpm --filter @ai-frontend-monitor/console dev",
+    "dev:api": "pnpm --filter @ai-frontend-monitor/api start:dev",
+    "build:console": "pnpm --filter @ai-frontend-monitor/console build",
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r --if-present typecheck"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module"
+}
