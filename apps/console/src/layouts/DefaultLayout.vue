@@ -99,12 +99,11 @@ const pageTitle = computed(() => (route.meta?.title as string | undefined) ?? ''
       <!-- Top bar -->
       <el-header class="topbar">
         <div class="topbar-left">
-          <div class="traffic-lights">
-            <span class="traffic-dot traffic-close" />
-            <span class="traffic-dot traffic-minimize" />
-            <span class="traffic-dot traffic-expand" />
-          </div>
-          <div class="topbar-divider" />
+          <svg class="topbar-mark" viewBox="0 0 32 14" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <rect x="2" y="8" width="4" height="5" rx="0.5" fill="#ff5f57"/>
+            <rect x="8" y="5" width="4" height="8" rx="0.5" fill="#febc2e"/>
+            <rect x="14" y="2" width="4" height="11" rx="0.5" fill="#28c840"/>
+          </svg>
           <div class="topbar-title">{{ pageTitle }}</div>
         </div>
 
@@ -352,39 +351,14 @@ export default {
 .topbar-left {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 8px;
   flex-shrink: 0;
 }
 
-.traffic-lights {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-shrink: 0;
-}
-
-.traffic-dot {
-  width: 14px;
+.topbar-mark {
+  width: 32px;
   height: 14px;
-  border-radius: 50%;
-}
-
-.traffic-close {
-  background: #ff5f57;
-}
-
-.traffic-minimize {
-  background: #febc2e;
-}
-
-.traffic-expand {
-  background: #28c840;
-}
-
-.topbar-divider {
-  width: 1px;
-  height: 24px;
-  background: var(--afm-border);
+  flex-shrink: 0;
 }
 
 .topbar-title {

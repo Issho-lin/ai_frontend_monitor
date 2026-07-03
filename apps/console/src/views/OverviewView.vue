@@ -105,9 +105,8 @@ const kindLabel: Record<string, string> = {
   <div class="afm-page">
     <!-- Health strip: gradient hero banner -->
     <div class="afm-card health" :data-status="projectOverview.status">
-      <div class="health-bg-glow"></div>
       <div class="health-item health-item--status">
-        <div class="health-dot" :class="`is-${projectOverview.status}`"></div>
+        <div class="health-icon warning"><el-icon><WarningFilled /></el-icon></div>
         <div>
           <div class="label">项目健康度</div>
           <div class="value">{{ statusMap[projectOverview.status].label }}</div>
@@ -226,29 +225,8 @@ const kindLabel: Record<string, string> = {
   padding: 18px 24px;
   position: relative;
   overflow: hidden;
-  background: linear-gradient(135deg, #ffffff 0%, #f5faff 60%, #f0f7ff 100%);
+  background: var(--afm-panel);
   border: 1px solid var(--afm-border);
-}
-
-/* Ambient glow behind health status */
-.health-bg-glow {
-  position: absolute;
-  top: -40px;
-  left: -20px;
-  width: 120px;
-  height: 120px;
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(245, 158, 11, 0.08) 0%, transparent 70%);
-  pointer-events: none;
-  transition: background 0.4s ease;
-}
-
-.health[data-status='healthy'] .health-bg-glow {
-  background: radial-gradient(circle, rgba(16, 185, 129, 0.1) 0%, transparent 70%);
-}
-
-.health[data-status='critical'] .health-bg-glow {
-  background: radial-gradient(circle, rgba(239, 68, 68, 0.1) 0%, transparent 70%);
 }
 
 .health::before {
@@ -273,6 +251,16 @@ const kindLabel: Record<string, string> = {
   min-width: 0;
   position: relative;
   z-index: 1;
+  flex: 1;
+}
+
+.health-item:last-child {
+  margin-left: auto;
+}
+
+.health-item--status .value {
+  font-size: 18px;
+  margin-top: 2px;
 }
 .health-item .label {
   font-size: 12px;
