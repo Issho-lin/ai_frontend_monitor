@@ -3,13 +3,14 @@ import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { Search, TrendCharts, CaretTop, CaretBottom, Right } from '@element-plus/icons-vue'
 import EChart from '@/components/EChart.vue'
-import { pageRows, trendSeries } from '@/mock/data'
+import { usePagesData } from '@/composables/usePagesData'
 
 const router = useRouter()
 const keyword = ref('')
+const { rows, trendSeries } = usePagesData()
 
 const filtered = computed(() =>
-  pageRows.filter((r) => r.route.toLowerCase().includes(keyword.value.trim().toLowerCase())),
+  rows.value.filter((r) => r.route.toLowerCase().includes(keyword.value.trim().toLowerCase())),
 )
 
 const distributionOption = computed(() => ({

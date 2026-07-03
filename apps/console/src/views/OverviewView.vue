@@ -14,15 +14,10 @@ import {
 } from '@element-plus/icons-vue'
 import MetricCard from '@/components/MetricCard.vue'
 import EChart from '@/components/EChart.vue'
-import {
-  agentSummary,
-  coreMetrics,
-  projectOverview,
-  topProblems,
-  trendSeries,
-} from '@/mock/data'
+import { useOverviewData } from '@/composables/useOverviewData'
 
 const router = useRouter()
+const { agentSummary, coreMetrics, projectOverview, topProblems, trendSeries } = useOverviewData()
 
 const statusMap = {
   healthy: { label: '健康', type: 'success' as const },
@@ -34,7 +29,7 @@ const trendOption = computed(() => ({
   tooltip: { trigger: 'axis' },
   legend: { data: ['LCP P75 (s)', 'INP P75 (ms)', 'API P95 (ms)', 'JS Error Rate (%)'] },
   grid: { left: 40, right: 40, top: 40, bottom: 30 },
-  xAxis: { type: 'category', data: trendSeries.lcp.map((p) => p[0]) },
+  xAxis: { type: 'category', data: trendSeries.value.lcp.map((p) => p[0]) },
   yAxis: [
     { type: 'value', name: 'LCP / Error', axisLabel: { color: '#6b7280' } },
     { type: 'value', name: 'ms', axisLabel: { color: '#6b7280' } },
@@ -44,7 +39,7 @@ const trendOption = computed(() => ({
       name: 'LCP P75 (s)',
       type: 'line',
       smooth: true,
-      data: trendSeries.lcp.map((p) => p[1]),
+      data: trendSeries.value.lcp.map((p) => p[1]),
       lineStyle: { color: '#0077ee', width: 2.5 },
       itemStyle: { color: '#0077ee' },
       areaStyle: {
@@ -63,7 +58,7 @@ const trendOption = computed(() => ({
       type: 'line',
       smooth: true,
       yAxisIndex: 1,
-      data: trendSeries.inp.map((p) => p[1]),
+      data: trendSeries.value.inp.map((p) => p[1]),
       lineStyle: { color: '#f59e0b', width: 2 },
       itemStyle: { color: '#f59e0b' },
     },
@@ -72,7 +67,7 @@ const trendOption = computed(() => ({
       type: 'line',
       smooth: true,
       yAxisIndex: 1,
-      data: trendSeries.api_p95.map((p) => p[1]),
+      data: trendSeries.value.api_p95.map((p) => p[1]),
       lineStyle: { color: '#10b981', width: 2 },
       itemStyle: { color: '#10b981' },
     },
@@ -80,7 +75,7 @@ const trendOption = computed(() => ({
       name: 'JS Error Rate (%)',
       type: 'line',
       smooth: true,
-      data: trendSeries.js_error.map((p) => p[1]),
+      data: trendSeries.value.js_error.map((p) => p[1]),
       lineStyle: { color: '#ef4444', width: 2 },
       itemStyle: { color: '#ef4444' },
     },

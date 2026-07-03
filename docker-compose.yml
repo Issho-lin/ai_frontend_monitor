@@ -111,9 +111,9 @@ services:
       - --overprovisioned
       - --reserve-memory 0M
       - --kafka-addr internal://0.0.0.0:9092
-      - --advertise-kafka-addr localhost:9092
+      - --advertise-kafka-addr internal://localhost:9092
       - --pandaproxy-addr internal://0.0.0.0:8082
-      - --advertise-pandaproxy-addr localhost:8082
+      - --advertise-pandaproxy-addr internal://localhost:8082
       - --schema-registry-addr internal://0.0.0.0:8081
       - --rpc-addr localhost:33145
       - --node-id 0

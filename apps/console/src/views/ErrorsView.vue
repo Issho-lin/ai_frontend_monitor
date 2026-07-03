@@ -2,13 +2,14 @@
 import { computed, ref } from 'vue'
 import { Search } from '@element-plus/icons-vue'
 import EChart from '@/components/EChart.vue'
-import { errorGroups, trendSeries } from '@/mock/data'
+import { useErrorsData } from '@/composables/useErrorsData'
 
 const keyword = ref('')
 const typeFilter = ref<'all' | 'js' | 'promise' | 'resource'>('all')
+const { rows, trendSeries } = useErrorsData()
 
 const filtered = computed(() =>
-  errorGroups.filter(
+  rows.value.filter(
     (r) =>
       r.message.toLowerCase().includes(keyword.value.trim().toLowerCase()) &&
       (typeFilter.value === 'all' || r.type === typeFilter.value),

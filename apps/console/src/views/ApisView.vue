@@ -2,12 +2,13 @@
 import { computed, ref } from 'vue'
 import { Search } from '@element-plus/icons-vue'
 import EChart from '@/components/EChart.vue'
-import { apiRows, trendSeries } from '@/mock/data'
+import { useApisData } from '@/composables/useApisData'
 
 const keyword = ref('')
+const { rows, trendSeries } = useApisData()
 
 const filtered = computed(() =>
-  apiRows.filter((r) => r.api.toLowerCase().includes(keyword.value.trim().toLowerCase())),
+  rows.value.filter((r) => r.api.toLowerCase().includes(keyword.value.trim().toLowerCase())),
 )
 
 const p95Option = computed(() => ({

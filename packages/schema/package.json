@@ -1,0 +1,23 @@
+{
+  "name": "@ai-frontend-monitor/schema",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./dist-cjs/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist-cjs/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.cjs.json && node -e \"require('fs').writeFileSync('dist-cjs/package.json', JSON.stringify({ type: 'commonjs' }, null, 2) + '\\n')\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.cjs.json --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "~6.0.0"
+  }
+}

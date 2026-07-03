@@ -16,6 +16,7 @@
     "format": "prettier --write --experimental-cli src/"
   },
   "dependencies": {
+    "@ai-frontend-monitor/schema": "workspace:*",
     "@element-plus/icons-vue": "^2.3.1",
     "@tanstack/vue-query": "^5.66.0",
     "dayjs": "^1.11.13",

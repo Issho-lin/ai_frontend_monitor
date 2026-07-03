@@ -46,12 +46,15 @@ TO VOLUME 'default';
 
 --
 -- 1-minute aggregation materialized view (auto-populated from rum_events)
--- Uses SummingMergeTree to aggregate repeated (project_id, env, minute, ...) groups
+-- AggregatingMergeTree + AggregateFunction states: quantiles/avg are stored as
+-- *State(...) aggregate states and merged on read with quantileMerge/avgMerge.
+-- This fixes the M1 pit where SummingMergeTree summed p50/p75/p95 across rows
+-- with the same sort key, breaking percentile semantics.
 --
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS afm.rum_metrics_1m
-ENGINE = SummingMergeTree
-ORDER BY (project_id, env, toStartOfMinute(timestamp), event_type, route, metric_name)
+ENGINE = AggregatingMergeTree
+ORDER BY (project_id, env, minute, event_type, route, metric_name)
 AS SELECT
     project_id,
     env,
@@ -59,12 +62,13 @@ AS SELECT
     event_type,
     route,
     metric_name,
-    avg(metric_value) AS avg_value,
-    quantile(0.5)(metric_value) AS p50_value,
-    quantile(0.75)(metric_value) AS p75_value,
-    quantile(0.95)(metric_value) AS p95_value,
-    count() AS sample_count
+    avgState(metric_value) AS avg_value,
+    quantileState(0.5)(metric_value) AS p50_value,
+    quantileState(0.75)(metric_value) AS p75_value,
+    quantileState(0.95)(metric_value) AS p95_value,
+    countState() AS sample_count
 FROM afm.rum_events
+WHERE event_type = 'web_vital'
 GROUP BY
     project_id, env, minute, event_type, route, metric_name;
 
@@ -73,8 +77,8 @@ GROUP BY
 --
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS afm.rum_metrics_1h
-ENGINE = SummingMergeTree
-ORDER BY (project_id, env, toStartOfHour(timestamp), event_type, route, metric_name)
+ENGINE = AggregatingMergeTree
+ORDER BY (project_id, env, hour, event_type, route, metric_name)
 AS SELECT
     project_id,
     env,
@@ -82,12 +86,13 @@ AS SELECT
     event_type,
     route,
     metric_name,
-    avg(metric_value) AS avg_value,
-    quantile(0.5)(metric_value) AS p50_value,
-    quantile(0.75)(metric_value) AS p75_value,
-    quantile(0.95)(metric_value) AS p95_value,
-    count() AS sample_count
+    avgState(metric_value) AS avg_value,
+    quantileState(0.5)(metric_value) AS p50_value,
+    quantileState(0.75)(metric_value) AS p75_value,
+    quantileState(0.95)(metric_value) AS p95_value,
+    countState() AS sample_count
 FROM afm.rum_events
+WHERE event_type = 'web_vital'
 GROUP BY
     project_id, env, hour, event_type, route, metric_name;
 
