@@ -1,0 +1,195 @@
+# ai-frontend-monitor infrastructure services
+#
+# Usage:
+#   docker compose up -d          # Start all services
+#   docker compose down -v        # Stop and remove all data volumes
+#   docker compose logs -f clickhouse   # Follow ClickHouse logs
+#
+# Application services (console, api, gateway, worker, agent)
+# run natively on macOS during development — they connect via
+# localhost ports or the compose network names internally.
+
+services:
+  # ─── PostgreSQL: business metadata ───────────────────────────────────────
+  postgres:
+    image: postgres:17-alpine
+    container_name: afm-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-afm}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-afm_dev_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-afm}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-afm} -d ${POSTGRES_DB:-afm}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+    networks:
+      - monitor-net
+
+  # ─── ClickHouse: RUM events detail + aggregation ─────────────────────────
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.8-alpine
+    container_name: afm-clickhouse
+    restart: unless-stopped
+    ports:
+      - "8123:8123"   # HTTP interface
+      - "9003:9000"   # Native protocol (9000 reserved by Docker Desktop)
+      - "9009:9009"   # Inter-server
+    environment:
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB:-afm}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-afm}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-afm_dev_secret}
+    volumes:
+      - ch_data:/var/lib/clickhouse
+      - ch_logs:/var/log/clickhouse-server
+      - ./infra/clickhouse/init:/docker-entrypoint-initdb.d:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8123/ >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 2G
+    networks:
+      - monitor-net
+
+  # ─── Redis: cache, rate limiting, sampling config, alert state ───────────
+  redis:
+    image: redis:7-alpine
+    container_name: afm-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 256M
+    networks:
+      - monitor-net
+
+  # ─── Redpanda: event message queue (Kafka-compatible) ───────────────────
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.2.18
+    container_name: afm-redpanda
+    restart: unless-stopped
+    ports:
+      - "9092:9092"    # Kafka API
+      - "8081:8081"    # Schema Registry
+      - "10001:10001"  # Admin API
+    command:
+      - redpanda
+      - start
+      - --smp 1
+      - --overprovisioned
+      - --reserve-memory 0M
+      - --kafka-addr internal://0.0.0.0:9092
+      - --advertise-kafka-addr localhost:9092
+      - --pandaproxy-addr internal://0.0.0.0:8082
+      - --advertise-pandaproxy-addr localhost:8082
+      - --schema-registry-addr internal://0.0.0.0:8081
+      - --rpc-addr localhost:33145
+      - --node-id 0
+      - --check=false
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://127.0.0.1:8081/ >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 2G
+    networks:
+      - monitor-net
+
+  # ─── MinIO: object storage (S3-compatible) ──────────────────────────────
+  minio:
+    image: minio/minio:latest
+    container_name: afm-minio
+    restart: unless-stopped
+    ports:
+      - "9100:9000"   # API (9000 reserved by Docker Desktop)
+      - "9101:9001"   # Console (9001 reserved by Docker Desktop)
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin_dev_secret}
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+    networks:
+      - monitor-net
+
+  # ─── MinIO Client: init buckets & policy ─────────────────────────────────
+  minio-setup:
+    image: minio/mc:latest
+    container_name: afm-minio-setup
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin_dev_secret};
+      mc mb --ignore-existing local/afm-sourcemaps;
+      mc mb --ignore-existing local/afm-raw-archive;
+      mc mb --ignore-existing local/afm-reports;
+      mc anonymous set download local/afm-raw-archive;
+      exit 0;
+      "
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin_dev_secret}
+    networks:
+      - monitor-net
+    restart: "no"
+
+volumes:
+  pg_data:
+  ch_data:
+  ch_logs:
+  redis_data:
+  minio_data:
+
+networks:
+  monitor-net:
+    driver: bridge
