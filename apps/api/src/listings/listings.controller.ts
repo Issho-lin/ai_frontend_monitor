@@ -13,6 +13,24 @@ export class ListingsController {
     return this.listingsService.getPages(projectId, env);
   }
 
+  @Get('pages/detail')
+  getPageDetail(
+    @Query('projectId') projectId = 'demo',
+    @Query('env') env = 'production',
+    @Query('route') route = '/home',
+  ) {
+    return this.listingsService.getPageDetail(projectId, env, route);
+  }
+
+  @Get('pages/resources')
+  getPageResources(
+    @Query('projectId') projectId = 'demo',
+    @Query('env') env = 'production',
+    @Query('route') route = '/home',
+  ) {
+    return this.listingsService.getPageResources(projectId, env, route);
+  }
+
   @Get('apis')
   getApis(
     @Query('projectId') projectId = 'demo',

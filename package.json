@@ -5,8 +5,13 @@
   "private": true,
   "packageManager": "pnpm@11.7.0",
   "scripts": {
+    "dev": "pnpm build:packages && pnpm dev:infra && concurrently -k -n console,api,gateway,worker -c cyan,green,yellow,magenta \"pnpm dev:console\" \"pnpm dev:api\" \"pnpm dev:gateway\" \"pnpm dev:worker\"",
+    "dev:infra": "docker compose up -d --wait postgres clickhouse redis redpanda minio && docker compose up minio-setup",
     "dev:console": "pnpm --filter @ai-frontend-monitor/console dev",
     "dev:api": "pnpm --filter @ai-frontend-monitor/api start:dev",
+    "dev:gateway": "pnpm --filter @ai-frontend-monitor/gateway start:dev",
+    "dev:worker": "pnpm --filter @ai-frontend-monitor/worker start:dev",
+    "build:packages": "pnpm --filter \"./packages/**\" build",
     "build:console": "pnpm --filter @ai-frontend-monitor/console build",
     "build": "pnpm -r build",
     "lint": "pnpm -r lint",
@@ -15,5 +20,8 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "module"
+  "type": "module",
+  "devDependencies": {
+    "concurrently": "^10.0.4"
+  }
 }

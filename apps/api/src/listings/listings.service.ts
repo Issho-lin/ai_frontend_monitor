@@ -14,6 +14,8 @@ export interface PageRowResult {
   clsP75: number;
   jsErrorRate: number;
   apiP95: number;
+  passRate: number;
+  trend: PageTrend;
 }
 
 export interface ApiRowResult {
@@ -40,6 +42,21 @@ export interface ErrorRowResult {
   status: 'unresolved';
 }
 
+export interface ResourceRowResult {
+  url: string;
+  type: 'js' | 'css' | 'img' | 'font' | 'other';
+  size: number;
+  duration: number;
+  cacheHitRate: number;
+  failRate: number;
+}
+
+export interface PageDetailResult {
+  page: PageRowResult | null;
+  resources: ResourceRowResult[];
+  apis: ApiRowResult[];
+}
+
 interface RawPageRow {
   route: string;
   pv: number;
@@ -60,6 +77,14 @@ interface RawApiRow {
   timeout_rate: number;
   total_requests: number;
   traced_requests: number;
+}
+
+interface RawResourceRow {
+  url: string;
+  resource_type: string | null;
+  size: number;
+  duration: number;
+  fail_rate: number;
 }
 
 interface RawErrorRow {
@@ -108,34 +133,100 @@ export class ListingsService {
     });
 
     const rows = await result.json<RawPageRow>();
+    return rows.map((row) => this.mapPageRow(row));
+  }
 
-    return rows.map((row) => {
-      const lcpP75 = row.lcp_p75 ?? 0;
-      const inpP75 = row.inp_p75 ?? 0;
-      const clsP75 = row.cls_p75 ?? 0;
-      const jsErrorRate = row.js_error_rate ?? 0;
-      const apiP95 = row.api_p95 ?? 0;
-      const passRate = this.computePagePassRate({
-        lcpP75,
-        inpP75,
-        clsP75,
-        jsErrorRate,
-        apiP95,
-      });
+  async getPageDetail(
+    projectId: string,
+    env: string,
+    route: string,
+  ): Promise<PageDetailResult> {
+    const [pages, resources, apis] = await Promise.all([
+      this.getPagesByRoute(projectId, env, route),
+      this.getPageResources(projectId, env, route),
+      this.getPageApis(projectId, env, route),
+    ]);
 
-      return {
-        route: row.route,
-        pv: row.pv,
-        affectedUsers: row.affected_users,
-        lcpP75: this.roundMetric(lcpP75, 1000),
-        inpP75: Math.round(inpP75),
-        clsP75: Number(clsP75.toFixed(3)),
-        jsErrorRate: Number(jsErrorRate.toFixed(2)),
-        apiP95: Math.round(apiP95),
-        passRate,
-        trend: this.computeTrend(passRate),
-      };
+    return {
+      page: pages[0] ?? null,
+      resources,
+      apis,
+    };
+  }
+
+  async getPageResources(
+    projectId: string,
+    env: string,
+    route: string,
+  ): Promise<ResourceRowResult[]> {
+    const result = await this.clickhouse.query({
+      query: `
+        SELECT
+          resource_url AS url,
+          any(resource_type) AS resource_type,
+          avg(resource_size) AS size,
+          quantile(0.75)(duration) AS duration,
+          (countIf(toBool(attributes.failed)) / count()) * 100 AS fail_rate
+        FROM afm.rum_events
+        WHERE project_id = {projectId:String}
+          AND env = {env:String}
+          AND event_type = 'resource_timing'
+          AND route = {route:String}
+          AND timestamp >= now() - INTERVAL 24 HOUR
+          AND resource_url != ''
+        GROUP BY resource_url
+        ORDER BY duration DESC
+        LIMIT 20
+      `,
+      query_params: { projectId, env, route },
+      format: 'JSONEachRow',
     });
+
+    const rows = await result.json<RawResourceRow>();
+
+    return rows.map((row) => ({
+      url: row.url,
+      type: this.normalizeResourceType(row.resource_type),
+      size: Math.round(row.size ?? 0),
+      duration: Math.round(row.duration ?? 0),
+      cacheHitRate: 0,
+      failRate: Number((row.fail_rate ?? 0).toFixed(2)),
+    }));
+  }
+
+  async getPageApis(
+    projectId: string,
+    env: string,
+    route: string,
+  ): Promise<ApiRowResult[]> {
+    const result = await this.clickhouse.query({
+      query: `
+        SELECT
+          api_route AS api,
+          upper(toString(attributes.method)) AS method,
+          quantile(0.5)(duration) AS p50,
+          quantile(0.95)(duration) AS p95,
+          (countIf(status_code >= 400 OR status_code = 0) / count()) * 100 AS error_rate,
+          (countIf(toBool(attributes.isTimeout)) / count()) * 100 AS timeout_rate,
+          count() AS total_requests,
+          countIf(length(trace_id) > 0) AS traced_requests
+        FROM afm.rum_events
+        WHERE project_id = {projectId:String}
+          AND env = {env:String}
+          AND event_type = 'api_timing'
+          AND route = {route:String}
+          AND timestamp >= now() - INTERVAL 24 HOUR
+          AND api_route != ''
+        GROUP BY api_route, method
+        ORDER BY total_requests DESC, api_route ASC
+        LIMIT 4
+      `,
+      query_params: { projectId, env, route },
+      format: 'JSONEachRow',
+    });
+
+    const rows = await result.json<RawApiRow>();
+    return rows.map((row) => this.mapApiRow(row));
   }
 
   async getApis(projectId: string, env: string): Promise<ApiRowResult[]> {
@@ -164,19 +255,7 @@ export class ListingsService {
     });
 
     const rows = await result.json<RawApiRow>();
-
-    return rows.map((row) => ({
-      api: row.api,
-      method: row.method || 'GET',
-      p95: Math.round(row.p95),
-      p50: Math.round(row.p50),
-      errorRate: Number(row.error_rate.toFixed(2)),
-      timeoutRate: Number(row.timeout_rate.toFixed(2)),
-      qps: Number((row.total_requests / 86400).toFixed(2)),
-      traceCoverage: row.total_requests > 0
-        ? Number(((row.traced_requests / row.total_requests) * 100).toFixed(0))
-        : 0,
-    }));
+    return rows.map((row) => this.mapApiRow(row));
   }
 
   async getErrors(projectId: string, env: string): Promise<ErrorRowResult[]> {
@@ -220,6 +299,80 @@ export class ListingsService {
     }));
   }
 
+  private async getPagesByRoute(
+    projectId: string,
+    env: string,
+    route: string,
+  ): Promise<PageRowResult[]> {
+    const result = await this.clickhouse.query({
+      query: `
+        SELECT
+          route,
+          countIf(event_type = 'page_view') AS pv,
+          uniqIf(user_id_hash, event_type = 'page_view') AS affected_users,
+          quantileIf(0.75)(metric_value, event_type = 'web_vital' AND metric_name = 'LCP') AS lcp_p75,
+          quantileIf(0.75)(metric_value, event_type = 'web_vital' AND metric_name = 'INP') AS inp_p75,
+          quantileIf(0.75)(metric_value, event_type = 'web_vital' AND metric_name = 'CLS') AS cls_p75,
+          (countIf(event_type = 'error') / nullIf(countIf(event_type = 'page_view'), 0)) * 100 AS js_error_rate,
+          quantileIf(0.95)(duration, event_type = 'api_timing') AS api_p95
+        FROM afm.rum_events
+        WHERE project_id = {projectId:String}
+          AND env = {env:String}
+          AND route = {route:String}
+          AND timestamp >= now() - INTERVAL 24 HOUR
+        GROUP BY route
+      `,
+      query_params: { projectId, env, route },
+      format: 'JSONEachRow',
+    });
+
+    const rows = await result.json<RawPageRow>();
+    return rows.map((row) => this.mapPageRow(row));
+  }
+
+  private mapPageRow(row: RawPageRow): PageRowResult {
+    const lcpP75 = row.lcp_p75 ?? 0;
+    const inpP75 = row.inp_p75 ?? 0;
+    const clsP75 = row.cls_p75 ?? 0;
+    const jsErrorRate = row.js_error_rate ?? 0;
+    const apiP95 = row.api_p95 ?? 0;
+    const passRate = this.computePagePassRate({
+      lcpP75,
+      inpP75,
+      clsP75,
+      jsErrorRate,
+      apiP95,
+    });
+
+    return {
+      route: row.route,
+      pv: row.pv,
+      affectedUsers: row.affected_users,
+      lcpP75: this.roundMetric(lcpP75, 1000),
+      inpP75: Math.round(inpP75),
+      clsP75: Number(clsP75.toFixed(3)),
+      jsErrorRate: Number(jsErrorRate.toFixed(2)),
+      apiP95: Math.round(apiP95),
+      passRate,
+      trend: this.computeTrend(passRate),
+    };
+  }
+
+  private mapApiRow(row: RawApiRow): ApiRowResult {
+    return {
+      api: row.api,
+      method: row.method || 'GET',
+      p95: Math.round(row.p95),
+      p50: Math.round(row.p50),
+      errorRate: Number(row.error_rate.toFixed(2)),
+      timeoutRate: Number(row.timeout_rate.toFixed(2)),
+      qps: Number((row.total_requests / 86400).toFixed(2)),
+      traceCoverage: row.total_requests > 0
+        ? Number(((row.traced_requests / row.total_requests) * 100).toFixed(0))
+        : 0,
+    };
+  }
+
   private computePagePassRate(metrics: {
     lcpP75: number;
     inpP75: number;
@@ -258,5 +411,17 @@ export class ListingsService {
       return value;
     }
     return 'js';
+  }
+
+  private normalizeResourceType(
+    value: string | null,
+  ): ResourceRowResult['type'] {
+    if (value === 'script' || value === 'js') {
+      return 'js';
+    }
+    if (value === 'css' || value === 'img' || value === 'font') {
+      return value;
+    }
+    return 'other';
   }
 }

@@ -6,21 +6,15 @@ import { ArrowLeft, DocumentCopy } from '@element-plus/icons-vue'
 import MetricCard from '@/components/MetricCard.vue'
 import EChart from '@/components/EChart.vue'
 import DiagnosisPanel from '@/components/DiagnosisPanel.vue'
-import {
-  apiRows,
-  getReportForRoute,
-  pageRows,
-  resourceRows,
-  trendSeries,
-} from '@/mock/data'
+import { getReportForRoute } from '@/mock/data'
+import { usePageDetailData } from '@/composables/usePageDetailData'
 
 const route = useRoute()
 const router = useRouter()
 
 const routeParam = computed(() => decodeURIComponent(String(route.params.route || '/home')))
-const pageInfo = computed(
-  () => pageRows.find((p) => p.route === routeParam.value) ?? pageRows[0],
-)
+const { page: pageInfo, resources: resourceRows, apis: apiPreview, trendSeries } =
+  usePageDetailData(routeParam)
 
 const report = computed(() => getReportForRoute(routeParam.value))
 const reportTitle = computed(() => "页面诊断")
@@ -107,13 +101,11 @@ const regionDist = computed(() => ({
 }))
 
 const resources = computed(() =>
-  resourceRows.slice(0, 5).map((r) => ({
+  resourceRows.value.map((r) => ({
     ...r,
     sizeKb: Math.round(r.size / 1024),
   })),
 )
-
-const apiPreview = apiRows.slice(0, 4)
 
 function copyRoute() {
   navigator.clipboard.writeText(routeParam.value)
