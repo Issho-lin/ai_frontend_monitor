@@ -2,15 +2,16 @@
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { Search } from '@element-plus/icons-vue'
-import { alertRows } from '@/mock/data'
+import { useAlertsData } from '@/composables/useAlertsData'
 
 const router = useRouter()
 const keyword = ref('')
 const status = ref<string>('all')
 const severity = ref<string>('all')
+const { rows: alertRows } = useAlertsData()
 
 const filtered = computed(() =>
-  alertRows.filter(
+  alertRows.value.filter(
     (r) =>
       r.title.toLowerCase().includes(keyword.value.trim().toLowerCase()) &&
       (status.value === 'all' || r.status === status.value) &&

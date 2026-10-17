@@ -6,16 +6,17 @@ import { ArrowLeft, ChatDotSquare, MagicStick, Right, Link } from '@element-plus
 import MetricCard from '@/components/MetricCard.vue'
 import EChart from '@/components/EChart.vue'
 import DiagnosisPanel from '@/components/DiagnosisPanel.vue'
-import { alertRows, getReportByAlert, releaseTimeline, taskRows, trendSeries } from '@/mock/data'
+import { getReportByAlert, releaseTimeline, trendSeries } from '@/mock/data'
+import { useAlertDetailData } from '@/composables/useAlertDetailData'
+import { createTask } from '@/composables/useTaskDetailData'
 
 const route = useRoute()
 const router = useRouter()
 
-const alert = computed(() => alertRows.find((a) => a.id === route.params.id) ?? alertRows[0])
+const alertId = computed(() => String(route.params.id || ''))
+const { alert, acting, applyAction } = useAlertDetailData(alertId)
 const report = computed(() => getReportByAlert(alert.value.id))
-const linkedTask = computed(() =>
-  alert.value.linkedTaskId ? taskRows.find((t) => t.id === alert.value.linkedTaskId) : undefined,
-)
+const linkedTaskId = computed(() => alert.value.linkedTaskId)
 
 const severityTagType: Record<string, 'danger' | 'warning' | 'info'> = {
   S0: 'danger',
@@ -92,14 +93,43 @@ function openTaskDialog() {
   taskDialog.value = true
 }
 
-function confirmTask() {
-  taskDialog.value = false
-  ElMessage.success('已创建治理任务 task-2001（示例），可在治理任务中查看')
-  router.push({ name: 'task-detail', params: { id: 'task-2001' } })
+async function confirmTask() {
+  try {
+    const created = await createTask({
+      title: taskForm.title,
+      owner: taskForm.owner,
+      priority: taskForm.priority,
+      acceptance: taskForm.acceptance,
+      dueDate: taskForm.dueDate ? new Date(taskForm.dueDate).toISOString() : '',
+      sourceAlertId: alert.value.id,
+      evidenceIds: taskForm.evidenceIds,
+    })
+    alert.value = { ...alert.value, linkedTaskId: created.id }
+    taskDialog.value = false
+    ElMessage.success(`已创建治理任务 ${created.id}`)
+    router.push({ name: 'task-detail', params: { id: created.id } })
+  } catch {
+    ElMessage.error('创建任务失败，请确认 API 已启动')
+  }
 }
 
 function openLinkedTask() {
-  if (linkedTask.value) router.push({ name: 'task-detail', params: { id: linkedTask.value.id } })
+  if (linkedTaskId.value) router.push({ name: 'task-detail', params: { id: linkedTaskId.value } })
+}
+
+async function acknowledge() {
+  await applyAction('acknowledge')
+  ElMessage.success('已认领该告警')
+}
+
+async function silenceOneHour() {
+  await applyAction('silence', 1)
+  ElMessage.success('已静默 1 小时')
+}
+
+async function markFalsePositive() {
+  await applyAction('false_positive')
+  ElMessage.success('已标记为误报')
 }
 </script>
 
@@ -121,17 +151,34 @@ function openLinkedTask() {
         {{ alert.firstSeen }}
       </div>
       <div class="header-actions">
-        <el-button v-if="!linkedTask" type="primary" @click="openTaskDialog">创建治理任务</el-button>
-        <el-button>认领</el-button>
-        <el-button>静默 1 小时</el-button>
-        <el-button>标记为误报</el-button>
+        <el-button v-if="!linkedTaskId" type="primary" @click="openTaskDialog">创建治理任务</el-button>
+        <el-button
+          v-if="alert.status === 'firing'"
+          :loading="acting"
+          @click="acknowledge"
+        >
+          认领
+        </el-button>
+        <el-button
+          v-if="alert.status === 'firing' || alert.status === 'acknowledged'"
+          :loading="acting"
+          @click="silenceOneHour"
+        >
+          静默 1 小时
+        </el-button>
+        <el-button
+          v-if="alert.status !== 'resolved'"
+          :loading="acting"
+          @click="markFalsePositive"
+        >
+          标记为误报
+        </el-button>
       </div>
 
       <!-- Linked task banner -->
-      <div v-if="linkedTask" class="linked-task" @click="openLinkedTask">
+      <div v-if="linkedTaskId" class="linked-task" @click="openLinkedTask">
         <el-icon><Link /></el-icon>
-        <span>已生成治理任务 <b>{{ linkedTask.id }}</b> · {{ linkedTask.title }}</span>
-        <el-tag size="small" style="margin-left: auto">{{ linkedTask.status }}</el-tag>
+        <span>已生成治理任务 <b>{{ linkedTaskId }}</b></span>
         <el-icon><Right /></el-icon>
       </div>
     </div>

@@ -1,17 +1,24 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, Right } from '@element-plus/icons-vue'
 import MetricCard from '@/components/MetricCard.vue'
 import EChart from '@/components/EChart.vue'
 import DiagnosisPanel from '@/components/DiagnosisPanel.vue'
-import { getReportByAlert, taskRows, trendSeries } from '@/mock/data'
+import { getReportByAlert } from '@/mock/data'
+import { useTaskDetailData } from '@/composables/useTaskDetailData'
 
 const route = useRoute()
 const router = useRouter()
 
-const task = computed(() => taskRows.find((t) => t.id === route.params.id) ?? taskRows[0])
+const taskId = computed(() => String(route.params.id || ''))
+const { task, acting, applyAction } = useTaskDetailData(taskId)
 const spec = computed(() => task.value.acceptanceSpec)
+const verification = computed(() => task.value.verification)
+const meetingTarget = computed(
+  () => spec.value.current <= spec.value.target,
+)
 
 const referencedReport = computed(() => getReportByAlert(task.value.sourceAlertId))
 
@@ -26,39 +33,25 @@ const statusMap: Record<
   Reopened: { text: '再次触发', type: 'danger' },
 }
 
-// The comparison chart is parameterized by the task's acceptance spec:
-// pre-fix curve sits around the baseline, post-fix curve drops toward the target.
 const verifyOption = computed(() => {
   const s = spec.value
-  const points = trendSeries.lcp
-  const idx = points.length - 8
-  const scaleBefore = s.baseline / 2.4
-  const before = points.slice(0, idx).map((p) => [p[0], Math.round(p[1] * scaleBefore * 100) / 100])
-  const afterVal = s.current
+  const points = verification.value?.series?.length
+    ? verification.value.series.map((point) => [point.timestamp, point.value] as [string, number])
+    : []
   return {
     tooltip: { trigger: 'axis' },
-    legend: { data: ['修复前', '修复后', '目标线'] },
+    legend: { data: ['LCP P75', '目标线'] },
     grid: { left: 48, right: 20, top: 40, bottom: 30 },
     xAxis: { type: 'category', data: points.map((p) => p[0]) },
     yAxis: { type: 'value', name: s.unit, axisLabel: { color: '#6b7280' } },
     series: [
       {
-        name: '修复前',
+        name: 'LCP P75',
         type: 'line',
         smooth: true,
-        data: before.map((p) => p[1]),
-        lineStyle: { color: '#a5b4c4' },
-        itemStyle: { color: '#a5b4c4' },
-      },
-      {
-        name: '修复后',
-        type: 'line',
-        smooth: true,
-        data: Array(before.length)
-          .fill(null)
-          .concat(points.slice(idx).map(() => afterVal)),
-        lineStyle: { color: '#10b981' },
-        itemStyle: { color: '#10b981' },
+        data: points.map((p) => p[1]),
+        lineStyle: { color: meetingTarget.value ? '#10b981' : '#ef4444' },
+        itemStyle: { color: meetingTarget.value ? '#10b981' : '#ef4444' },
         markLine: {
           symbol: 'none',
           lineStyle: { color: '#0077ee', type: 'dashed' },
@@ -80,13 +73,49 @@ const activity = ref([
 function verifyState() {
   const s = task.value.status
   if (s === 'Resolved') return { text: 'passed', type: 'success' as const }
-  if (s === 'Verifying') return { text: 'observing', type: 'warning' as const }
   if (s === 'Reopened') return { text: 'failed', type: 'danger' as const }
+  if (s === 'Verifying' && meetingTarget.value) return { text: 'meeting', type: 'success' as const }
+  if (s === 'Verifying') return { text: 'observing', type: 'warning' as const }
   return { text: 'pending', type: 'info' as const }
 }
 
 function openSourceAlert() {
   router.push({ name: 'alert-detail', params: { id: task.value.sourceAlertId } })
+}
+
+function openFixRelease() {
+  router.push({ name: 'release-detail', params: { version: task.value.fixRelease } })
+}
+
+async function startFix() {
+  await applyAction('start')
+  ElMessage.success('任务已进入修复中')
+}
+
+async function submitFix() {
+  try {
+    const { value } = await ElMessageBox.prompt('请输入本次修复发布的版本号（需与 SDK release 一致）', '提交修复版本', {
+      confirmButtonText: '进入观察窗口',
+      cancelButtonText: '取消',
+      inputPlaceholder: '例如 1.18.1 或 v1.18.1',
+      inputValue: task.value.fixRelease || '',
+      inputValidator: (val) => Boolean(val?.trim()) || '版本号不能为空',
+    })
+    await applyAction('submit_fix', { release: String(value).trim() })
+    ElMessage.success(`已关联版本 ${String(value).trim()}，进入观察窗口`)
+  } catch {
+    // cancelled
+  }
+}
+
+async function resolveTask() {
+  await applyAction('resolve')
+  ElMessage.success('任务已关闭')
+}
+
+async function reopenTask() {
+  await applyAction('reopen')
+  ElMessage.warning('任务已标记为再次触发')
 }
 </script>
 
@@ -107,12 +136,43 @@ function openSourceAlert() {
           <el-icon><Right /></el-icon>
         </a>
         · 截止 {{ task.dueDate }}
+        <template v-if="task.fixRelease">
+          · 修复版本
+          <a class="alert-link" @click="openFixRelease">{{ task.fixRelease }}</a>
+        </template>
       </div>
       <div class="header-actions">
-        <el-button type="primary">开始修复</el-button>
-        <el-button>提交修复版本</el-button>
-        <el-button>关闭为已修复</el-button>
-        <el-button type="danger" plain>标记再次触发</el-button>
+        <el-button
+          v-if="task.status === 'Open' || task.status === 'Reopened'"
+          type="primary"
+          :loading="acting"
+          @click="startFix"
+        >
+          开始修复
+        </el-button>
+        <el-button
+          v-if="task.status === 'InProgress'"
+          :loading="acting"
+          @click="submitFix"
+        >
+          提交修复版本
+        </el-button>
+        <el-button
+          v-if="task.status === 'Verifying'"
+          :loading="acting"
+          @click="resolveTask"
+        >
+          关闭为已修复
+        </el-button>
+        <el-button
+          v-if="task.status !== 'Resolved' && task.status !== 'Reopened'"
+          type="danger"
+          plain
+          :loading="acting"
+          @click="reopenTask"
+        >
+          标记再次触发
+        </el-button>
       </div>
     </div>
 
@@ -123,8 +183,8 @@ function openSourceAlert() {
         label="当前值 / 目标"
         :value="`${spec.current}${spec.unit} / ${spec.target}${spec.unit}`"
         :delta="`基线 ${spec.baseline}${spec.unit}`"
-        delta-dir="down"
-        :good="true"
+        :delta-dir="meetingTarget ? 'down' : 'up'"
+        :good="meetingTarget"
       />
       <div class="afm-metric">
         <div class="label">
@@ -138,9 +198,13 @@ function openSourceAlert() {
           {{
             verifyState().text === 'passed'
               ? '验收指标已连续达标'
-              : verifyState().text === 'observing'
-                ? '观察窗口进行中'
-                : '等待验证'
+              : verifyState().text === 'meeting'
+                ? '观察窗口内已低于目标'
+                : verifyState().text === 'observing'
+                  ? '观察窗口进行中，尚未达标'
+                  : verifyState().text === 'failed'
+                    ? '指标再次劣化'
+                    : '等待验证'
           }}
         </div>
       </div>
@@ -150,8 +214,8 @@ function openSourceAlert() {
       <div class="split-main">
         <div class="afm-card">
           <div class="afm-section-title">
-            修复前后对比
-            <span class="afm-hint">观察窗口 {{ spec.windowHours }} 小时 · {{ spec.label }}</span>
+            修复验证
+            <span class="afm-hint">最近 {{ spec.windowHours }} 小时 · {{ spec.label }} 真实 P75</span>
           </div>
           <EChart :option="verifyOption" height="300px" />
         </div>

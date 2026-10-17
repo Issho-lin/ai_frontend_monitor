@@ -2,14 +2,16 @@
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { Search, CaretTop, CaretBottom, Minus } from '@element-plus/icons-vue'
-import { releaseRows, type ReleaseRow } from '@/mock/data'
+import { type ReleaseRow } from '@/mock/data'
+import { useReleasesData } from '@/composables/useReleasesData'
 
 const router = useRouter()
 const keyword = ref('')
 const envFilter = ref('all')
+const { rows } = useReleasesData()
 
 const filtered = computed(() =>
-  releaseRows.filter(
+  rows.value.filter(
     (r) =>
       (r.version.toLowerCase().includes(keyword.value.trim().toLowerCase()) ||
         r.commit.includes(keyword.value.trim())) &&
@@ -30,7 +32,11 @@ function perfIcon(dir: ReleaseRow['perfDir']) {
 }
 
 function open(r: ReleaseRow) {
-  router.push({ name: 'release-detail', params: { version: r.version } })
+  router.push({
+    name: 'release-detail',
+    params: { version: r.version },
+    query: { env: r.env },
+  })
 }
 </script>
 

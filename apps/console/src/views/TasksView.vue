@@ -2,14 +2,15 @@
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { Search, Plus } from '@element-plus/icons-vue'
-import { taskRows } from '@/mock/data'
+import { useTasksData } from '@/composables/useTasksData'
 
 const router = useRouter()
 const keyword = ref('')
 const status = ref('all')
+const { rows: taskRows } = useTasksData()
 
 const filtered = computed(() =>
-  taskRows.filter(
+  taskRows.value.filter(
     (r) =>
       r.title.toLowerCase().includes(keyword.value.trim().toLowerCase()) &&
       (status.value === 'all' || r.status === status.value),

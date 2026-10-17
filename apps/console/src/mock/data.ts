@@ -68,6 +68,7 @@ export interface TaskRow {
   dueDate: string
   sourceAlertId: string
   createdAt: string
+  fixRelease?: string
 }
 
 export interface ApiRow {

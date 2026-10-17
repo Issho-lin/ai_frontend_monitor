@@ -3,14 +3,14 @@ import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft, CaretTop, CaretBottom, Right } from '@element-plus/icons-vue'
 import EChart from '@/components/EChart.vue'
-import { alertRows, getReleaseDiff, releaseRows } from '@/mock/data'
+import { useReleaseDetailData } from '@/composables/useReleaseDetailData'
 
 const route = useRoute()
 const router = useRouter()
 
-const version = computed(() => String(route.params.version || 'v1.18.0'))
-const releaseInfo = computed(() => releaseRows.find((r) => r.version === version.value))
-const diff = computed(() => getReleaseDiff(version.value))
+const version = computed(() => String(route.params.version || ''))
+const env = computed(() => String(route.query.env || ''))
+const { release: releaseInfo, diff } = useReleaseDetailData(version, env)
 
 const metricChartOption = computed(() => {
   const d = diff.value
@@ -31,7 +31,7 @@ const metricChartOption = computed(() => {
       {
         name: '发布后',
         type: 'bar',
-        data: d.metrics.map((m) => Math.round((m.after / m.before) * 100)),
+        data: d.metrics.map((m) => (m.before ? Math.round((m.after / m.before) * 100) : m.after ? 100 : 0)),
         itemStyle: {
           color: (p: { dataIndex: number }) => (d.metrics[p.dataIndex].bad ? '#ef4444' : '#10b981'),
         },
@@ -46,11 +46,7 @@ function fmtSize(bytes: number) {
   return `${Math.round(bytes / 1000)}KB`
 }
 
-const alertObjs = computed(() =>
-  (diff.value?.alerts ?? [])
-    .map((id) => alertRows.find((a) => a.id === id))
-    .filter((a): a is NonNullable<typeof a> => Boolean(a)),
-)
+const alertObjs = computed(() => diff.value?.alerts ?? [])
 
 const resourceKindMap: Record<string, { text: string; type: 'success' | 'danger' | 'warning' }> = {
   added: { text: '新增', type: 'success' },
@@ -126,7 +122,9 @@ function openAlert(id: string) {
             <el-table-column label="变化" min-width="140">
               <template #default="{ row }">
                 {{ row.before }}{{ row.unit }} → <b>{{ row.after }}{{ row.unit }}</b>
-                <span class="up-text">(+{{ row.changePct }}%)</span>
+                <span :class="row.changePct > 0 ? 'up-text' : 'down-text'">
+                  ({{ row.changePct > 0 ? '+' : '' }}{{ row.changePct }}%)
+                </span>
               </template>
             </el-table-column>
           </el-table>
@@ -296,6 +294,11 @@ function openAlert(id: string) {
 }
 .up-text {
   color: var(--afm-danger);
+  margin-left: 4px;
+  font-size: 12px;
+}
+.down-text {
+  color: var(--afm-success);
   margin-left: 4px;
   font-size: 12px;
 }

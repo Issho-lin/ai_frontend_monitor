@@ -7,6 +7,7 @@ import type {
 } from '@ai-frontend-monitor/schema';
 import { formatMetricValue, isGoodMetric } from '@ai-frontend-monitor/schema';
 import { createClient } from '@clickhouse/client';
+import { AlertsService } from '../alerts/alerts.service';
 
 interface MetricRow {
   metric_name: string;
@@ -31,16 +32,19 @@ export class OverviewService {
     database: process.env.CLICKHOUSE_DB ?? 'afm',
   });
 
+  constructor(private readonly alertsService: AlertsService) {}
+
   async getOverview(projectId: string, env: string): Promise<OverviewPayload> {
-    const [metricRows, lcpTrendRows] = await Promise.all([
+    const [metricRows, lcpTrendRows, activeAlerts] = await Promise.all([
       this.fetchMetricRows(projectId, env),
       this.fetchTrendRows(projectId, env, 'LCP'),
+      this.alertsService.countActive(projectId, env).catch(() => 0),
     ]);
 
     return {
       health: {
-        status: metricRows.length > 0 ? 'warning' : 'healthy',
-        activeAlerts: 0,
+        status: activeAlerts > 0 ? 'warning' : 'healthy',
+        activeAlerts,
         affectedUsers: 0,
         latestRelease: 'v0.1.0',
         latestReleaseAt: new Date().toISOString(),
