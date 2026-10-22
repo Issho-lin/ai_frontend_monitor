@@ -21,6 +21,7 @@ export type MetricName =
 export type DeviceType = 'desktop' | 'mobile' | 'tablet' | 'unknown'
 
 export type ResourceType = 'script' | 'css' | 'img' | 'font' | 'fetch' | 'other'
+export type ErrorKind = 'js' | 'promise' | 'resource'
 
 export interface EventContext {
   release: string
@@ -56,6 +57,8 @@ export interface JsErrorEvent {
   message: string
   stackHash: string
   stack?: string
+  /** Explicit collector classification; the gateway only infers it for legacy clients. */
+  errorType?: ErrorKind
   /** override the payload-level route when the error happened on a different page */
   route?: string
 }
@@ -97,6 +100,11 @@ export interface IngestPayload {
   route: string
   pageUrl: string
   occurredAt: string
+  /**
+   * Record one page view for this payload. Leave unset for errors, API timings,
+   * resources, and web vitals so those reports do not inflate PV.
+   */
+  recordPageView?: boolean
   metrics?: MetricValues
   errors?: JsErrorEvent[]
   apiTimings?: ApiTimingEvent[]

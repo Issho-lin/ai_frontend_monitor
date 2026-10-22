@@ -212,7 +212,7 @@ function openSourceAlert() {
   flex-direction: column;
 }
 .diag-reference {
-  background: linear-gradient(180deg, rgba(0, 119, 238, 0.02), #ffffff);
+  background: linear-gradient(180deg, rgba(0, 119, 238, 0.04), #ffffff);
   border-color: rgba(0, 119, 238, 0.15);
 }
 .diag-actions {

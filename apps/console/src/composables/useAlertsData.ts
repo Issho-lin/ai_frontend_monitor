@@ -1,8 +1,9 @@
 import { onMounted, ref } from 'vue'
-import { alertRows as mockAlertRows, type AlertRow } from '@/mock/data'
+import { type AlertRow } from '@/mock/data'
+import { monitorSearch } from '@/composables/monitorSearch'
 
 export function useAlertsData() {
-  const rows = ref<AlertRow[]>(mockAlertRows)
+  const rows = ref<AlertRow[]>([])
   const loading = ref(false)
   const error = ref<string | null>(null)
 
@@ -11,7 +12,7 @@ export function useAlertsData() {
     error.value = null
 
     try {
-      const response = await fetch('/api/v1/alerts?projectId=demo&env=production')
+      const response = await fetch(`/api/v1/alerts?${monitorSearch().toString()}`)
       if (!response.ok) {
         throw new Error(`Alerts request failed: ${response.status}`)
       }
@@ -19,7 +20,7 @@ export function useAlertsData() {
       rows.value = (await response.json()) as AlertRow[]
     } catch (err) {
       error.value = err instanceof Error ? err.message : 'Unknown error'
-      rows.value = mockAlertRows
+      rows.value = []
     } finally {
       loading.value = false
     }

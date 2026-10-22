@@ -11,8 +11,13 @@ import {
   collectResources,
   computeStackHash,
   installErrorCollector,
+  installNavigationCollector,
   installNetworkCollector,
+  installWebVitalCollector,
   normalizeRoute,
+  readPageUrl,
+  readRoute,
+  type AutoVital,
   type ErrorKind,
 } from './collector.js'
 import { sendPayload } from './transport.js'
@@ -21,26 +26,36 @@ export {
   collectResources,
   computeStackHash,
   installErrorCollector,
+  installNavigationCollector,
   installNetworkCollector,
+  installWebVitalCollector,
   normalizeRoute,
+  readPageUrl,
+  readRoute,
 } from './collector.js'
 
-export interface InitOptions {
+export interface AfmInitOptions {
   projectId: string
   env: RuntimeEnv
   endpoint?: string
-  release: string
+  /** Project token. Sent as a header for fetch and in the body for beacon delivery. */
+  token?: string
+  /**
+   * Optional build version. Leave unset when the project has no version.
+   * When unset, the SDK reads `<meta name="afm-release">` or `window.__AFM_RELEASE__`.
+   */
+  release?: string
   sdkVersion?: string
   defaultRoute?: string
   defaultPageUrl?: string
   userIdHash?: string
   sessionId?: string
   sampleRate?: number
-  /** When true (default), auto-install error / fetch / XHR collectors on init. */
+  /** When true (default), collect page views, Web Vitals, errors, and fetch / XHR timings. */
   autoTrack?: boolean
 }
 
-export interface TrackPageViewOptions {
+export interface AfmTrackPageViewOptions {
   route?: string
   pageUrl?: string
   occurredAt?: string
@@ -54,7 +69,7 @@ export interface TrackPageViewOptions {
   attributes?: Record<string, unknown>
 }
 
-export interface TrackWebVitalOptions {
+export interface AfmTrackWebVitalOptions {
   metricName: MetricName
   value: number
   route?: string
@@ -63,7 +78,7 @@ export interface TrackWebVitalOptions {
   attributes?: Record<string, unknown>
 }
 
-export interface TrackErrorOptions {
+export interface AfmTrackErrorOptions {
   name: string
   message: string
   stack?: string
@@ -73,7 +88,7 @@ export interface TrackErrorOptions {
   attributes?: Record<string, unknown>
 }
 
-export interface TrackApiTimingOptions {
+export interface AfmTrackApiTimingOptions {
   apiRoute: string
   method: string
   url?: string
@@ -85,7 +100,7 @@ export interface TrackApiTimingOptions {
   attributes?: Record<string, unknown>
 }
 
-export interface TrackResourceOptions {
+export interface AfmTrackResourceOptions {
   url: string
   initiatorType: string
   size: number
@@ -99,6 +114,7 @@ interface SDKConfig {
   projectId: string
   env: RuntimeEnv
   endpoint: string
+  token: string
   release: string
   sdkVersion: string
   defaultRoute: string
@@ -106,6 +122,7 @@ interface SDKConfig {
   userIdHash: string
   sessionId: string
   sampleRate: number
+  sampled: boolean
 }
 
 const DEFAULT_ENDPOINT = 'http://127.0.0.1:3001/ingest'
@@ -115,14 +132,18 @@ let config: SDKConfig | null = null
 
 /** Auto-collected events buffered here until flush. */
 interface AutoBuffer {
-  errors: Array<JsErrorEvent & { kind: ErrorKind }>
+  errors: JsErrorEvent[]
   apiTimings: ApiTimingEvent[]
   resources: ResourceTimingEvent[]
 }
 
 let buffer: AutoBuffer = { errors: [], apiTimings: [], resources: [] }
 let flushTimer: ReturnType<typeof setTimeout> | null = null
+let flushScheduled = false
 let collectorCleanup: (() => void) | null = null
+let vitalCollector: ReturnType<typeof installWebVitalCollector> | null = null
+let lastAutoPageUrl = ''
+let resourcesCollected = false
 
 const FLUSH_DELAY_MS = 2000
 const MAX_BUFFER_PER_KIND = 50
@@ -135,12 +156,58 @@ function randomId(prefix: string): string {
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}`
 }
 
+const RELEASE_PLACEHOLDER = '__AFM_RELEASE__'
+
+function resolveRelease(explicit?: string): string {
+  if (explicit !== undefined) {
+    return explicit.trim()
+  }
+
+  return detectRelease()
+}
+
+function detectRelease(): string {
+  const fromMeta = readMetaRelease()
+  if (fromMeta) {
+    return fromMeta
+  }
+
+  if (typeof window !== 'undefined') {
+    const value = (window as Window & { __AFM_RELEASE__?: unknown }).__AFM_RELEASE__
+    return normalizeRelease(value)
+  }
+
+  return ''
+}
+
+function readMetaRelease(): string {
+  if (typeof document === 'undefined') {
+    return ''
+  }
+
+  const content = document.querySelector('meta[name="afm-release"]')?.getAttribute('content')
+  return normalizeRelease(content)
+}
+
+function normalizeRelease(value: unknown): string {
+  if (typeof value !== 'string') {
+    return ''
+  }
+
+  const trimmed = value.trim()
+  if (!trimmed || trimmed === RELEASE_PLACEHOLDER) {
+    return ''
+  }
+
+  return trimmed
+}
+
 function getDefaultRoute(): string {
   if (typeof window === 'undefined') {
     return '/'
   }
 
-  return window.location.pathname || '/'
+  return readRoute()
 }
 
 function getDefaultPageUrl(): string {
@@ -149,6 +216,94 @@ function getDefaultPageUrl(): string {
   }
 
   return window.location.href
+}
+
+const SESSION_KEY = 'afm.sessionId'
+const USER_KEY = 'afm.userId'
+const SAMPLED_KEY = 'afm.sampled'
+
+function browserStorage(kind: 'session' | 'local'): Storage | undefined {
+  if (typeof window === 'undefined') {
+    return undefined
+  }
+  try {
+    return kind === 'session' ? window.sessionStorage : window.localStorage
+  } catch {
+    return undefined
+  }
+}
+
+function persistId(kind: 'session' | 'local', key: string, explicit: string | undefined, prefix: string): string {
+  if (explicit) {
+    return explicit
+  }
+  const storage = browserStorage(kind)
+  try {
+    const existing = storage?.getItem(key)
+    if (existing) {
+      return existing
+    }
+    const created = randomId(prefix)
+    storage?.setItem(key, created)
+    return created
+  } catch {
+    return randomId(prefix)
+  }
+}
+
+function decideSampled(rate: number): boolean {
+  if (rate >= 1) {
+    return true
+  }
+  if (rate <= 0) {
+    return false
+  }
+  const storage = browserStorage('session')
+  try {
+    const stored = storage?.getItem(SAMPLED_KEY)
+    if (stored === '1' || stored === '0') {
+      return stored === '1'
+    }
+    const sampled = Math.random() < rate
+    storage?.setItem(SAMPLED_KEY, sampled ? '1' : '0')
+    return sampled
+  } catch {
+    return Math.random() < rate
+  }
+}
+
+function getNetworkType(): string {
+  if (typeof navigator === 'undefined') {
+    return 'unknown'
+  }
+  const connection = (navigator as Navigator & { connection?: { effectiveType?: string; type?: string } }).connection
+  return connection?.effectiveType || connection?.type || 'unknown'
+}
+
+function getBrowser(): string {
+  if (typeof navigator === 'undefined') {
+    return 'unknown'
+  }
+  const ua = navigator.userAgent
+  if (/edg\//i.test(ua)) return 'Edge'
+  if (/opr\//i.test(ua) || /opera/i.test(ua)) return 'Opera'
+  if (/chrome|crios/i.test(ua)) return 'Chrome'
+  if (/firefox|fxios/i.test(ua)) return 'Firefox'
+  if (/safari/i.test(ua)) return 'Safari'
+  return 'unknown'
+}
+
+function getOs(): string {
+  if (typeof navigator === 'undefined') {
+    return 'unknown'
+  }
+  const ua = navigator.userAgent
+  if (/android/i.test(ua)) return 'Android'
+  if (/iphone|ipad|ipod/i.test(ua)) return 'iOS'
+  if (/mac os/i.test(ua)) return 'macOS'
+  if (/windows/i.test(ua)) return 'Windows'
+  if (/linux/i.test(ua)) return 'Linux'
+  return 'unknown'
 }
 
 function getDeviceType(): EventContext['deviceType'] {
@@ -168,7 +323,7 @@ function getDeviceType(): EventContext['deviceType'] {
 
 function getContext(overrides?: Record<string, unknown>): EventContext {
   if (!config) {
-    throw new Error('AFM SDK has not been initialized. Call init() first.')
+    throw new Error('AFM SDK has not been initialized. Call afmInit() first.')
   }
 
   return {
@@ -177,31 +332,33 @@ function getContext(overrides?: Record<string, unknown>): EventContext {
     sessionId: config.sessionId,
     userIdHash: config.userIdHash,
     deviceType: getDeviceType(),
-    os: typeof navigator === 'undefined' ? 'unknown' : navigator.platform || 'unknown',
-    browser: typeof navigator === 'undefined' ? 'unknown' : navigator.userAgent,
-    networkType: 'unknown',
+    os: getOs(),
+    browser: getBrowser(),
+    networkType: getNetworkType(),
     sampleRate: config.sampleRate,
     attributes: overrides,
   }
 }
 
-function buildPayload(options: TrackPageViewOptions): IngestPayload {
+function buildPayload(options: AfmTrackPageViewOptions & { recordPageView?: boolean }): IngestPayload {
   if (!config) {
-    throw new Error('AFM SDK has not been initialized. Call init() first.')
+    throw new Error('AFM SDK has not been initialized. Call afmInit() first.')
   }
 
   return {
     projectId: config.projectId,
+    token: config.token || undefined,
     env: config.env,
     route: options.route ?? config.defaultRoute,
     pageUrl: options.pageUrl ?? config.defaultPageUrl,
     occurredAt: options.occurredAt ?? getNowIso(),
+    recordPageView: options.recordPageView ?? false,
     metrics: options.metrics,
     context: getContext(options.attributes),
   }
 }
 
-function buildVitalPayload(options: TrackWebVitalOptions): IngestPayload {
+function buildVitalPayload(options: AfmTrackWebVitalOptions): IngestPayload {
   return buildPayload({
     route: options.route,
     pageUrl: options.pageUrl,
@@ -213,54 +370,140 @@ function buildVitalPayload(options: TrackWebVitalOptions): IngestPayload {
   })
 }
 
-export function init(options: InitOptions): void {
+export function afmInit(options: AfmInitOptions): void {
   config = {
     projectId: options.projectId,
     env: options.env,
     endpoint: options.endpoint ?? DEFAULT_ENDPOINT,
-    release: options.release,
+    token: options.token ?? '',
+    release: resolveRelease(options.release),
     sdkVersion: options.sdkVersion ?? DEFAULT_SDK_VERSION,
     defaultRoute: options.defaultRoute ?? getDefaultRoute(),
     defaultPageUrl: options.defaultPageUrl ?? getDefaultPageUrl(),
-    userIdHash: options.userIdHash ?? randomId('user'),
-    sessionId: options.sessionId ?? randomId('session'),
+    userIdHash: persistId('local', USER_KEY, options.userIdHash, 'user'),
+    sessionId: persistId('session', SESSION_KEY, options.sessionId, 'session'),
     sampleRate: options.sampleRate ?? 1,
+    sampled: decideSampled(options.sampleRate ?? 1),
   }
 
   // tear down any previous auto-collectors (e.g. HMR in dev)
   collectorCleanup?.()
   collectorCleanup = null
+  vitalCollector = null
+  lastAutoPageUrl = ''
+  resourcesCollected = false
 
-  if (options.autoTrack ?? true) {
+  if ((options.autoTrack ?? true) && config.sampled) {
     installAutoCollectors()
   }
 }
 
 function installAutoCollectors(): void {
-  if (typeof window === 'undefined') {
+  if (typeof window === 'undefined' || !config) {
     return
   }
 
+  const endpoint = config.endpoint
+  const endpointUrl = new URL(endpoint, window.location.href).href
   const errorCollector = installErrorCollector((event) => {
     pushBuffer('errors', event)
   })
   const networkCollector = installNetworkCollector((event) => {
     pushBuffer('apiTimings', event)
+  }, {
+    ignore: (url) => {
+      const requestUrl = new URL(url, window.location.href).href
+      return requestUrl === endpointUrl || requestUrl.startsWith(`${endpointUrl}?`)
+    },
   })
+  vitalCollector = installWebVitalCollector((vital) => {
+    void reportAutoVital(vital)
+  })
+  const navigationCollector = installNavigationCollector(() => {
+    reportAutoPage()
+  })
+
+  const onHide = () => {
+    vitalCollector?.finalize()
+    collectAutoResources()
+    void afmFlush({ beacon: true })
+  }
+  const onVisibility = () => {
+    if (document.visibilityState === 'hidden') {
+      onHide()
+    }
+  }
+
+  window.addEventListener('pagehide', onHide)
+  document.addEventListener('visibilitychange', onVisibility)
 
   collectorCleanup = () => {
     errorCollector.cleanup()
     networkCollector.cleanup()
+    vitalCollector?.cleanup()
+    vitalCollector = null
+    navigationCollector.cleanup()
+    window.removeEventListener('pagehide', onHide)
+    document.removeEventListener('visibilitychange', onVisibility)
   }
 
-  // flush on page hide (best-effort via sendBeacon)
-  if (typeof window !== 'undefined') {
-    window.addEventListener('pagehide', scheduleFlush)
-    window.addEventListener('beforeunload', scheduleFlush)
+  reportAutoPage()
+}
+
+function reportAutoPage(): void {
+  if (!config || typeof window === 'undefined') {
+    return
+  }
+
+  const route = readRoute()
+  const pageUrl = readPageUrl()
+  config.defaultRoute = route
+  config.defaultPageUrl = pageUrl
+  if (pageUrl === lastAutoPageUrl) {
+    return
+  }
+  lastAutoPageUrl = pageUrl
+
+  const payload = buildPayload({ route, pageUrl, recordPageView: true })
+  void sendPayload(payload, { endpoint: config.endpoint }).catch(() => {
+    // Page-view telemetry is best-effort.
+  })
+}
+
+async function reportAutoVital(vital: AutoVital): Promise<void> {
+  if (!config) {
+    return
+  }
+
+  const metricKey = vital.metricName.toLowerCase() as keyof NonNullable<AfmTrackPageViewOptions['metrics']>
+  const payload = buildPayload({
+    route: vital.route,
+    pageUrl: vital.pageUrl,
+    recordPageView: false,
+    metrics: { [metricKey]: vital.value },
+  })
+
+  try {
+    await sendPayload(payload, { endpoint: config.endpoint })
+  } catch {
+    // Vital telemetry is best-effort.
   }
 }
 
-function pushBuffer(kind: 'errors', event: JsErrorEvent & { kind: ErrorKind }): void
+function collectAutoResources(): void {
+  if (!config || resourcesCollected) {
+    return
+  }
+  resourcesCollected = true
+  collectResources((event) => {
+    pushBuffer('resources', event)
+  }, {
+    route: readRoute(),
+    ingestEndpoint: config.endpoint,
+  })
+}
+
+function pushBuffer(kind: 'errors', event: JsErrorEvent): void
 function pushBuffer(kind: 'apiTimings', event: ApiTimingEvent): void
 function pushBuffer(kind: 'resources', event: ResourceTimingEvent): void
 function pushBuffer(kind: keyof AutoBuffer, event: unknown): void {
@@ -273,27 +516,30 @@ function pushBuffer(kind: keyof AutoBuffer, event: unknown): void {
 }
 
 function scheduleFlush(): void {
-  if (flushTimer || !config) {
+  if (flushTimer || flushScheduled || !config) {
     return
   }
   // prefer idle callback; fall back to a timer
   if (typeof window !== 'undefined' && typeof (window as Window & { requestIdleCallback?: (cb: () => void) => number }).requestIdleCallback === 'function') {
+    flushScheduled = true
     ;(window as Window & { requestIdleCallback: (cb: () => void) => number }).requestIdleCallback(() => {
-      void flush()
+      flushScheduled = false
+      void afmFlush()
     })
     return
   }
   flushTimer = setTimeout(() => {
-    void flush()
+    void afmFlush()
   }, FLUSH_DELAY_MS)
 }
 
 /** Send all buffered events as a single merged payload, then clear the buffer. */
-export async function flush(): Promise<void> {
-  if (!config) {
+export async function afmFlush(options?: { beacon?: boolean }): Promise<void> {
+  if (!config || !config.sampled) {
     return
   }
   flushTimer = null
+  flushScheduled = false
   const { errors, apiTimings, resources } = buffer
   if (errors.length === 0 && apiTimings.length === 0 && resources.length === 0) {
     return
@@ -306,38 +552,42 @@ export async function flush(): Promise<void> {
   payload.resources = resources.length ? resources : undefined
 
   try {
-    await sendPayload(payload, { endpoint: config.endpoint })
+    await sendPayload(payload, { endpoint: config.endpoint, beacon: options?.beacon })
   } catch {
     // auto-collected telemetry is best-effort; swallow so app code is unaffected
   }
 }
 
-export async function trackPageView(options: TrackPageViewOptions = {}): Promise<void> {
+function requireReporting(): SDKConfig | null {
   if (!config) {
-    throw new Error('AFM SDK has not been initialized. Call init() first.')
+    throw new Error('AFM SDK has not been initialized. Call afmInit() first.')
+  }
+  return config.sampled ? config : null
+}
+
+export async function afmTrackPageView(options: AfmTrackPageViewOptions = {}): Promise<void> {
+  const current = requireReporting()
+  if (!current) {
+    return
   }
 
   const payload = buildPayload({
     ...options,
-    metrics: {
-      fcp: options.metrics?.fcp ?? 1200,
-      lcp: options.metrics?.lcp ?? 2400,
-      inp: options.metrics?.inp,
-      cls: options.metrics?.cls,
-      ttfb: options.metrics?.ttfb,
-    },
+    recordPageView: true,
+    metrics: options.metrics,
   })
 
-  await sendPayload(payload, { endpoint: config.endpoint })
+  await sendPayload(payload, { endpoint: current.endpoint })
 }
 
-export async function trackWebVital(options: TrackWebVitalOptions): Promise<void> {
-  if (!config) {
-    throw new Error('AFM SDK has not been initialized. Call init() first.')
+export async function afmTrackWebVital(options: AfmTrackWebVitalOptions): Promise<void> {
+  const current = requireReporting()
+  if (!current) {
+    return
   }
 
   const payload = buildVitalPayload(options)
-  await sendPayload(payload, { endpoint: config.endpoint })
+  await sendPayload(payload, { endpoint: current.endpoint })
 }
 
 /**
@@ -345,9 +595,10 @@ export async function trackWebVital(options: TrackWebVitalOptions): Promise<void
  * are buffered and flushed; this is for explicit reporting or when auto-track
  * is off. `stackHash` defaults to a deterministic hash of `stack`.
  */
-export async function trackError(options: TrackErrorOptions): Promise<void> {
-  if (!config) {
-    throw new Error('AFM SDK has not been initialized. Call init() first.')
+export async function afmTrackError(options: AfmTrackErrorOptions): Promise<void> {
+  const current = requireReporting()
+  if (!current) {
+    return
   }
 
   const payload = buildPayload({ route: options.route, attributes: options.attributes })
@@ -358,15 +609,17 @@ export async function trackError(options: TrackErrorOptions): Promise<void> {
       stack: options.stack,
       stackHash: options.stackHash ?? computeStackHash(options.stack ?? `${options.name}:${options.message}`),
       route: options.route,
+      errorType: options.kind,
     },
   ]
-  await sendPayload(payload, { endpoint: config.endpoint })
+  await sendPayload(payload, { endpoint: current.endpoint })
 }
 
 /** Manually report a single API/fetch timing sample. */
-export async function trackApiTiming(options: TrackApiTimingOptions): Promise<void> {
-  if (!config) {
-    throw new Error('AFM SDK has not been initialized. Call init() first.')
+export async function afmTrackApiTiming(options: AfmTrackApiTimingOptions): Promise<void> {
+  const current = requireReporting()
+  if (!current) {
+    return
   }
 
   const payload = buildPayload({ route: options.route, attributes: options.attributes })
@@ -381,13 +634,14 @@ export async function trackApiTiming(options: TrackApiTimingOptions): Promise<vo
       traceId: options.traceId,
     },
   ]
-  await sendPayload(payload, { endpoint: config.endpoint })
+  await sendPayload(payload, { endpoint: current.endpoint })
 }
 
 /** Manually report a single resource timing sample. */
-export async function trackResource(options: TrackResourceOptions): Promise<void> {
-  if (!config) {
-    throw new Error('AFM SDK has not been initialized. Call init() first.')
+export async function afmTrackResource(options: AfmTrackResourceOptions): Promise<void> {
+  const current = requireReporting()
+  if (!current) {
+    return
   }
 
   const payload = buildPayload({ route: options.route, attributes: options.attributes })
@@ -401,17 +655,17 @@ export async function trackResource(options: TrackResourceOptions): Promise<void
       route: options.route,
     },
   ]
-  await sendPayload(payload, { endpoint: config.endpoint })
+  await sendPayload(payload, { endpoint: current.endpoint })
 }
 
 const AFM = {
-  init,
-  trackPageView,
-  trackWebVital,
-  trackError,
-  trackApiTiming,
-  trackResource,
-  flush,
+  afmInit,
+  afmTrackPageView,
+  afmTrackWebVital,
+  afmTrackError,
+  afmTrackApiTiming,
+  afmTrackResource,
+  afmFlush,
 }
 
 export default AFM

@@ -7,6 +7,7 @@
  */
 import type {
   ApiTimingEvent,
+  ErrorKind,
   JsErrorEvent,
   ResourceTimingEvent,
 } from '@ai-frontend-monitor/schema'
@@ -86,8 +87,7 @@ export function computeStackHash(stack: string): string {
 
 type PushFn<T> = (event: T) => void
 
-/** Type tag carried in JsErrorEvent so the backend can derive `type` (js/promise/resource). */
-export type ErrorKind = 'js' | 'promise' | 'resource'
+export type { ErrorKind } from '@ai-frontend-monitor/schema'
 
 interface InstalledCollectors {
   cleanup: () => void
@@ -97,7 +97,7 @@ interface InstalledCollectors {
  * Install `window.onerror` + `unhandledrejection` listeners. Returns a cleanup
  * function that removes them (used by tests / `autoTrack: false` toggling).
  */
-export function installErrorCollector(push: PushFn<JsErrorEvent & { kind: ErrorKind }>): InstalledCollectors {
+export function installErrorCollector(push: PushFn<JsErrorEvent>): InstalledCollectors {
   if (typeof window === 'undefined') {
     return { cleanup: () => {} }
   }
@@ -112,8 +112,8 @@ export function installErrorCollector(push: PushFn<JsErrorEvent & { kind: ErrorK
       message,
       stack,
       stackHash: computeStackHash(stack || `${name}:${message}`),
-      route: location.pathname,
-      kind: 'js',
+      route: readRoute(),
+      errorType: 'js',
     })
   }
 
@@ -127,8 +127,8 @@ export function installErrorCollector(push: PushFn<JsErrorEvent & { kind: ErrorK
       message,
       stack,
       stackHash: computeStackHash(stack || `${name}:${message}`),
-      route: location.pathname,
-      kind: 'promise',
+      route: readRoute(),
+      errorType: 'promise',
     })
   }
 
@@ -147,8 +147,8 @@ export function installErrorCollector(push: PushFn<JsErrorEvent & { kind: ErrorK
       name: 'resource_error',
       message: `Failed to load ${tag}: ${url}`,
       stackHash: computeStackHash(`resource:${url}`),
-      route: location.pathname,
-      kind: 'resource',
+      route: readRoute(),
+      errorType: 'resource',
     })
   }
 
@@ -185,7 +185,10 @@ function resolveRequestUrl(input: RequestInfo | URL): string {
  * Patch `fetch` + `XMLHttpRequest` to record one ApiTimingEvent per request.
  * The patches are transparent to application code.
  */
-export function installNetworkCollector(push: PushFn<ApiTimingEvent>): InstalledCollectors {
+export function installNetworkCollector(
+  push: PushFn<ApiTimingEvent>,
+  options: { ignore?: (url: string) => boolean } = {},
+): InstalledCollectors {
   if (typeof window === 'undefined') {
     return { cleanup: () => {} }
   }
@@ -196,8 +199,11 @@ export function installNetworkCollector(push: PushFn<ApiTimingEvent>): Installed
   if (typeof fetch === 'function') {
     const originalFetch = window.fetch
     const patchedFetch: typeof fetch = async (input, init) => {
-      const start = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()
       const url = resolveRequestUrl(input)
+      if (options.ignore?.(url)) {
+        return originalFetch(input, init)
+      }
+      const start = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()
       let response: Response
       try {
         response = await originalFetch(input, init)
@@ -208,6 +214,7 @@ export function installNetworkCollector(push: PushFn<ApiTimingEvent>): Installed
           url,
           statusCode: 0,
           duration: elapsedSince(start),
+          isTimeout: err instanceof DOMException && err.name === 'AbortError',
         })
         throw err
       }
@@ -217,6 +224,7 @@ export function installNetworkCollector(push: PushFn<ApiTimingEvent>): Installed
         url,
         statusCode: response.status,
         duration: elapsedSince(start),
+        traceId: response.headers.get('traceparent') ?? response.headers.get('x-trace-id') ?? undefined,
       })
       return response
     }
@@ -232,25 +240,28 @@ export function installNetworkCollector(push: PushFn<ApiTimingEvent>): Installed
     const originalSend = XMLHttpRequest.prototype.send
 
     XMLHttpRequest.prototype.open = function patchedOpen(
-      this: XMLHttpRequest & { __afmMeta?: { method: string; url: string; start: number } },
+      this: XMLHttpRequest & { __afmMeta?: { method: string; url: string; start: number; timedOut: boolean } },
       method: string,
       url: string | URL,
     ) {
-      this.__afmMeta = { method: String(method).toUpperCase(), url: String(url), start: 0 }
+      this.__afmMeta = { method: String(method).toUpperCase(), url: String(url), start: 0, timedOut: false }
       // forward the original call verbatim (preserves async/username/password)
       return originalOpen.apply(this, arguments as unknown as Parameters<typeof originalOpen>)
     }
 
     XMLHttpRequest.prototype.send = function patchedSend(
-      this: XMLHttpRequest & { __afmMeta?: { method: string; url: string; start: number } },
+      this: XMLHttpRequest & { __afmMeta?: { method: string; url: string; start: number; timedOut: boolean } },
       body?: Document | XMLHttpRequestBodyInit | null,
     ) {
       if (this.__afmMeta) {
         this.__afmMeta.start = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()
       }
       const meta = this.__afmMeta
+      this.addEventListener('timeout', () => {
+        if (meta) meta.timedOut = true
+      }, { once: true })
       this.addEventListener('loadend', () => {
-        if (!meta) {
+        if (!meta || options.ignore?.(meta.url)) {
           return
         }
         push({
@@ -259,6 +270,8 @@ export function installNetworkCollector(push: PushFn<ApiTimingEvent>): Installed
           url: meta.url,
           statusCode: this.status,
           duration: elapsedSince(meta.start),
+          isTimeout: meta.timedOut,
+          traceId: this.getResponseHeader('traceparent') ?? this.getResponseHeader('x-trace-id') ?? undefined,
         })
       })
       return originalSend.apply(this, arguments as unknown as Parameters<typeof originalSend>)
@@ -322,6 +335,234 @@ export function collectResources(
   }
 
   return pushed
+}
+
+export type AutoMetricName = 'FCP' | 'LCP' | 'INP' | 'CLS' | 'TTFB'
+
+export interface AutoVital {
+  metricName: AutoMetricName
+  value: number
+  route: string
+  pageUrl: string
+}
+
+/** Route key for the current document, including hash-router paths (`#/orders/1`). */
+export function readRoute(): string {
+  if (typeof location === 'undefined') {
+    return '/'
+  }
+
+  const hash = location.hash
+  if (hash.startsWith('#/')) {
+    return normalizeRoute(hash.slice(1))
+  }
+
+  return normalizeRoute(location.pathname || '/')
+}
+
+export function readPageUrl(): string {
+  if (typeof location === 'undefined') {
+    return ''
+  }
+
+  return location.href
+}
+
+/**
+ * Fire when the SPA URL changes. `pushState` / `replaceState` are wrapped;
+ * browser back/forward and hash changes use their own events.
+ */
+export function installNavigationCollector(onChange: () => void): InstalledCollectors {
+  if (typeof window === 'undefined' || typeof history === 'undefined') {
+    return { cleanup: () => {} }
+  }
+
+  const originalPush = history.pushState
+  const originalReplace = history.replaceState
+
+  history.pushState = function patchedPushState(...args: Parameters<History['pushState']>) {
+    const result = originalPush.apply(this, args)
+    onChange()
+    return result
+  }
+
+  history.replaceState = function patchedReplaceState(...args: Parameters<History['replaceState']>) {
+    const result = originalReplace.apply(this, args)
+    onChange()
+    return result
+  }
+
+  window.addEventListener('popstate', onChange)
+  window.addEventListener('hashchange', onChange)
+
+  return {
+    cleanup: () => {
+      history.pushState = originalPush
+      history.replaceState = originalReplace
+      window.removeEventListener('popstate', onChange)
+      window.removeEventListener('hashchange', onChange)
+    },
+  }
+}
+
+const LCP_SETTLE_MS = 5000
+
+/**
+ * Read Web Vitals from the Performance API and call `onFinal` once per metric.
+ * FCP and TTFB are final as soon as the browser reports them. LCP is sent after
+ * it stops moving, or when the page hides. CLS and INP are sent when the page
+ * hides, so partial values are not stored as extra samples.
+ */
+export function installWebVitalCollector(onFinal: (vital: AutoVital) => void): InstalledCollectors & { finalize: () => void } {
+  if (typeof window === 'undefined' || typeof PerformanceObserver === 'undefined') {
+    return { cleanup: () => {}, finalize: () => {} }
+  }
+
+  const cleanups: Array<() => void> = []
+  const emitted = new Set<AutoMetricName>()
+
+  const emit = (vital: AutoVital) => {
+    if (emitted.has(vital.metricName) || !Number.isFinite(vital.value) || vital.value < 0) {
+      return
+    }
+    emitted.add(vital.metricName)
+    onFinal({
+      ...vital,
+      value: vital.metricName === 'CLS' ? Number(vital.value.toFixed(4)) : Math.round(vital.value),
+    })
+  }
+
+  const place = () => ({ route: readRoute(), pageUrl: readPageUrl() })
+
+  try {
+    const navigation = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined
+    if (navigation && navigation.responseStart > 0) {
+      emit({ metricName: 'TTFB', value: navigation.responseStart, ...place() })
+    }
+  } catch {
+    // Navigation Timing is unavailable.
+  }
+
+  try {
+    const paint = new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) {
+        if (entry.name === 'first-contentful-paint' && entry.startTime > 0) {
+          emit({ metricName: 'FCP', value: entry.startTime, ...place() })
+        }
+      }
+    })
+    paint.observe({ type: 'paint', buffered: true })
+    cleanups.push(() => paint.disconnect())
+  } catch {
+    // Paint timing is unavailable.
+  }
+
+  let sawLcp = false
+  let lcpValue = 0
+  let lcpPlace = place()
+  let lcpTimer: ReturnType<typeof setTimeout> | null = null
+
+  const emitLcp = () => {
+    if (lcpTimer) {
+      clearTimeout(lcpTimer)
+      lcpTimer = null
+    }
+    if (!sawLcp) {
+      return
+    }
+    emit({ metricName: 'LCP', value: lcpValue, route: lcpPlace.route, pageUrl: lcpPlace.pageUrl })
+  }
+
+  try {
+    const lcp = new PerformanceObserver((list) => {
+      const entries = list.getEntries()
+      const last = entries[entries.length - 1] as (PerformanceEntry & { renderTime?: number }) | undefined
+      if (!last) {
+        return
+      }
+      const value = last.renderTime && last.renderTime > 0 ? last.renderTime : last.startTime
+      if (value <= 0) {
+        return
+      }
+      sawLcp = true
+      lcpValue = value
+      lcpPlace = place()
+      if (lcpTimer) {
+        clearTimeout(lcpTimer)
+      }
+      lcpTimer = setTimeout(emitLcp, LCP_SETTLE_MS)
+    })
+    lcp.observe({ type: 'largest-contentful-paint', buffered: true })
+    cleanups.push(() => {
+      lcp.disconnect()
+      if (lcpTimer) {
+        clearTimeout(lcpTimer)
+      }
+    })
+  } catch {
+    // LCP is unavailable.
+  }
+
+  let clsSupported = false
+  let clsValue = 0
+  let clsPlace = place()
+
+  try {
+    const cls = new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) {
+        const shift = entry as PerformanceEntry & { value?: number; hadRecentInput?: boolean }
+        if (shift.hadRecentInput || typeof shift.value !== 'number' || shift.value <= 0) {
+          continue
+        }
+        clsValue += shift.value
+        clsPlace = place()
+      }
+    })
+    cls.observe({ type: 'layout-shift', buffered: true })
+    clsSupported = true
+    cleanups.push(() => cls.disconnect())
+  } catch {
+    // Layout shift timing is unavailable.
+  }
+
+  const interactions = new Map<number, { duration: number; route: string; pageUrl: string }>()
+
+  try {
+    const inp = new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) {
+        const timing = entry as PerformanceEntry & { interactionId?: number; duration: number }
+        const interactionId = timing.interactionId ?? 0
+        if (!interactionId || timing.duration <= 0) {
+          continue
+        }
+        const current = place()
+        const previous = interactions.get(interactionId)
+        if (!previous || timing.duration > previous.duration) {
+          interactions.set(interactionId, { duration: timing.duration, route: current.route, pageUrl: current.pageUrl })
+        }
+      }
+    })
+    inp.observe({ type: 'event', buffered: true, durationThreshold: 16 } as PerformanceObserverInit)
+    cleanups.push(() => inp.disconnect())
+  } catch {
+    // Event timing is unavailable.
+  }
+
+  return {
+    finalize: () => {
+      emitLcp()
+      if (clsSupported) {
+        emit({ metricName: 'CLS', value: clsValue, route: clsPlace.route, pageUrl: clsPlace.pageUrl })
+      }
+      if (interactions.size > 0) {
+        const ranked = [...interactions.values()].sort((a, b) => b.duration - a.duration)
+        const index = Math.min(ranked.length - 1, Math.floor(ranked.length / 50))
+        const picked = ranked[index]
+        emit({ metricName: 'INP', value: picked.duration, route: picked.route, pageUrl: picked.pageUrl })
+      }
+    },
+    cleanup: () => cleanups.forEach((fn) => fn()),
+  }
 }
 
 export type { InstalledCollectors }

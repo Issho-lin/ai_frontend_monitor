@@ -2,12 +2,14 @@ import type { IngestPayload } from '@ai-frontend-monitor/schema'
 
 export interface TransportOptions {
   endpoint: string
+  /** Use sendBeacon. Reserved for page hide, where fetch may be cancelled. */
+  beacon?: boolean
 }
 
 export async function sendPayload(payload: IngestPayload, options: TransportOptions): Promise<void> {
   const body = JSON.stringify(payload)
 
-  if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
+  if (options.beacon && typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
     const blob = new Blob([body], { type: 'application/json' })
     const accepted = navigator.sendBeacon(options.endpoint, blob)
     if (accepted) {
@@ -23,6 +25,7 @@ export async function sendPayload(payload: IngestPayload, options: TransportOpti
     method: 'POST',
     headers: {
       'content-type': 'application/json',
+      ...(payload.token ? { 'x-project-token': payload.token } : {}),
     },
     body,
     keepalive: true,

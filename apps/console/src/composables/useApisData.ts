@@ -1,8 +1,9 @@
 import { onMounted, ref } from 'vue'
-import { apiRows as mockApiRows, trendSeries as mockTrendSeries, type ApiRow } from '@/mock/data'
+import { type ApiRow } from '@/mock/data'
+import { monitorSearch } from '@/composables/monitorSearch'
 
 export function useApisData() {
-  const rows = ref<ApiRow[]>(mockApiRows)
+  const rows = ref<ApiRow[]>([])
   const loading = ref(false)
   const error = ref<string | null>(null)
 
@@ -11,7 +12,7 @@ export function useApisData() {
     error.value = null
 
     try {
-      const response = await fetch('/api/v1/apis?projectId=demo&env=production')
+      const response = await fetch(`/api/v1/apis?${monitorSearch().toString()}`)
       if (!response.ok) {
         throw new Error(`APIs request failed: ${response.status}`)
       }
@@ -19,7 +20,7 @@ export function useApisData() {
       rows.value = (await response.json()) as ApiRow[]
     } catch (err) {
       error.value = err instanceof Error ? err.message : 'Unknown error'
-      rows.value = mockApiRows
+      rows.value = []
     } finally {
       loading.value = false
     }
@@ -33,7 +34,6 @@ export function useApisData() {
     rows,
     loading,
     error,
-    trendSeries: mockTrendSeries,
     fetchApis,
   }
 }

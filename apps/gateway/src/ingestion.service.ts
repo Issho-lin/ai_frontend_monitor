@@ -11,9 +11,16 @@ export class IngestionService {
   constructor(private readonly queueService: QueueService) {}
 
   async ingest(payload: IngestPayload, token?: string) {
-    this.assertAuthorized(payload.projectId, token);
+    this.assertAuthorized(payload.projectId, token ?? payload.token);
 
     const events = this.expandPayload(payload);
+    if (events.length === 0) {
+      return {
+        status: 'accepted',
+        accepted: 0,
+      };
+    }
+
     await this.queueService.publish(events);
 
     return {
@@ -38,15 +45,17 @@ export class IngestionService {
 
   private expandPayload(payload: IngestPayload): RUMEvent[] {
     const baseEvent = this.buildBaseEvent(payload);
-    const events: RUMEvent[] = [
-      {
+    const events: RUMEvent[] = [];
+
+    if (payload.recordPageView) {
+      events.push({
         ...baseEvent,
         event_id: randomUUID(),
         event_type: 'page_view',
         metric_name: 'PV',
         metric_value: 1,
-      },
-    ];
+      });
+    }
 
     const metrics = payload.metrics ?? {};
 
@@ -83,7 +92,7 @@ export class IngestionService {
           ...(payload.context.attributes ?? {}),
           message: error.message,
           stack: error.stack ?? '',
-          errorType: this.deriveErrorType(error.name),
+          errorType: error.errorType ?? this.deriveErrorType(error.name),
         },
       });
     }
