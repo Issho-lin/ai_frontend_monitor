@@ -89,3 +89,90 @@ pnpm --filter @ai-frontend-monitor/api test -- alerts.rule.spec.ts notify.spec.t
 | `ALERT_NOTIFY_DEDUPE_MINUTES` | `15` | api |
 | `CLICKHOUSE_*` / `POSTGRES_*` | see `.env.example` | api |
 | `AFM_PROJECT_TOKENS` | gateway only | **do not** remove for alerts |
+
+## Alert rules API (Console — flip `USE_ALERT_RULES_MOCK` off)
+
+Paths match `apps/console/src/api/alertRules.ts`.
+
+### `GET /api/v1/alert-rules?projectId=demo&env=production`
+
+Seeds three defaults per `(projectId, env)` if missing, then returns:
+
+```json
+[
+  {
+    "id": "lcp-p75-threshold",
+    "name": "核心页面 LCP 劣化",
+    "metric": "LCP P75",
+    "poorThreshold": 2500,
+    "severeThreshold": 4000,
+    "unit": "ms",
+    "enabled": true,
+    "webhookUrl": "",
+    "email": "",
+    "updatedAt": "2026-10-24T05:00:00.000Z"
+  },
+  {
+    "id": "js-error-rate",
+    "name": "JS 错误率升高",
+    "metric": "JS Error Rate",
+    "poorThreshold": 1,
+    "severeThreshold": 10,
+    "unit": "percent",
+    "enabled": true,
+    "webhookUrl": "",
+    "email": "",
+    "updatedAt": "2026-10-24T05:00:00.000Z"
+  },
+  {
+    "id": "api-error-rate",
+    "name": "接口错误率升高",
+    "metric": "API Error Rate",
+    "poorThreshold": 2,
+    "severeThreshold": 10,
+    "unit": "percent",
+    "enabled": true,
+    "webhookUrl": "",
+    "email": "",
+    "updatedAt": "2026-10-24T05:00:00.000Z"
+  }
+]
+```
+
+Field meaning:
+
+| Field | Meaning |
+|-------|---------|
+| `poorThreshold` | 不良线 — above this enters baseline-relative zone |
+| `severeThreshold` | 严重线 — at/above → S0 |
+| `enabled` | `false` → evaluator **skips** this rule |
+| `webhookUrl` | Per-rule notify URL (preferred over env `ALERT_WEBHOOK_URL`) |
+| `email` | Placeholder only — stored, not sent |
+
+`id` equals evaluator `rule_id`: `lcp-p75-threshold` | `js-error-rate` | `api-error-rate`.
+
+### `PATCH /api/v1/alert-rules/:id?projectId=demo&env=production`
+
+Updates **one** rule (Console calls this per edit). Body (all fields optional):
+
+```json
+{
+  "poorThreshold": 2500,
+  "severeThreshold": 4000,
+  "enabled": true,
+  "webhookUrl": "https://hooks.example.com/xxx",
+  "email": "oncall@example.com"
+}
+```
+
+Response: the updated rule object (same shape as list item).
+
+Persist table: Postgres `alert_rules` (`PRIMARY KEY (project_id, env, id)`).
+
+### Evaluator behaviour
+
+- Loads rule from `alert_rules` each evaluation.
+- `enabled=false` → skip that rule (no new fires; does not auto-resolve in this slice).
+- Thresholds from store replace hard-coded constants.
+- Notify: `rule.webhookUrl` if non-empty, else `ALERT_WEBHOOK_URL`.
+

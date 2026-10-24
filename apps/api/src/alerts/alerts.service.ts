@@ -9,6 +9,12 @@ import {
 } from '@nestjs/common';
 import { createClient } from '@clickhouse/client';
 import { formatMetricValue, METRIC_SPECS } from '@ai-frontend-monitor/schema';
+import {
+  AlertRulesService,
+  RULE_ID_API,
+  RULE_ID_JS,
+  RULE_ID_LCP,
+} from './alert-rules.service';
 import { NotifyService } from './notify.service';
 import { PostgresService } from './postgres.service';
 
@@ -60,13 +66,9 @@ interface AlertDbRow {
   linked_task_id: string | null;
 }
 
-const RULE_ID = 'lcp-p75-threshold';
-const JS_RULE_ID = 'js-error-rate';
-const API_RULE_ID = 'api-error-rate';
-const JS_POOR_PCT = 1;
-const JS_SEVERE_PCT = 10;
-const API_POOR_PCT = 2;
-const API_SEVERE_PCT = 10;
+const RULE_ID = RULE_ID_LCP;
+const JS_RULE_ID = RULE_ID_JS;
+const API_RULE_ID = RULE_ID_API;
 const MIN_ERROR_SESSIONS = 5;
 const MIN_API_REQUESTS = 20;
 const LOOKBACK_MINUTES = 10;
@@ -77,9 +79,14 @@ const DEGRADATION_RATIO = 1.2;
 const EVAL_TTL_MS = 30_000;
 const EVAL_INTERVAL_MS = 60_000;
 
-export function isLcpDegraded(currentMs: number, baselineMs: number | null) {
-  if (currentMs >= LCP_S0_MS) return true;
-  if (currentMs <= LCP_THRESHOLD_MS) return false;
+export function isLcpDegraded(
+  currentMs: number,
+  baselineMs: number | null,
+  poorAt = LCP_THRESHOLD_MS,
+  severeAt = LCP_S0_MS,
+) {
+  if (currentMs >= severeAt) return true;
+  if (currentMs <= poorAt) return false;
   if (baselineMs == null || baselineMs <= 0) return true;
   return currentMs > baselineMs * DEGRADATION_RATIO;
 }
@@ -108,6 +115,7 @@ export class AlertsService implements OnModuleInit, OnModuleDestroy {
   constructor(
     private readonly postgres: PostgresService,
     private readonly notify: NotifyService,
+    private readonly rules: AlertRulesService,
   ) {}
 
   onModuleInit() {
@@ -312,8 +320,11 @@ export class AlertsService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async evaluateLcp(projectId: string, env: string) {
+    const rule = await this.rules.get(projectId, env, RULE_ID);
+    if (!rule.enabled) return;
+
     const [breaches, baselines] = await Promise.all([
-      this.fetchLcpBreaches(projectId, env),
+      this.fetchLcpBreaches(projectId, env, rule.poorThreshold),
       this.fetchLcpBaselines(projectId, env),
     ]);
 
@@ -325,10 +336,10 @@ export class AlertsService implements OnModuleInit, OnModuleDestroy {
 
     for (const breach of breaches) {
       const baselineMs = baselineByRoute.get(breach.route) ?? null;
-      if (!isLcpDegraded(breach.lcp_p75, baselineMs)) continue;
+      if (!isLcpDegraded(breach.lcp_p75, baselineMs, rule.poorThreshold, rule.severeThreshold)) continue;
       const fingerprint = this.fingerprint(projectId, env, breach.route);
       activeFingerprints.push(fingerprint);
-      const severity = this.severityFor(breach.lcp_p75);
+      const severity = this.severityFor(breach.lcp_p75, rule.severeThreshold);
       const title = `${breach.route} LCP P75 劣化`;
       const triggerValue = formatMetricValue('LCP', breach.lcp_p75);
       const baseline = baselineMs == null ? '—' : formatMetricValue('LCP', baselineMs);
@@ -397,6 +408,7 @@ export class AlertsService implements OnModuleInit, OnModuleDestroy {
         triggerValue,
         baseline,
         release: breach.release || '',
+        webhookUrl: rule.webhookUrl,
       });
     }
 
@@ -430,6 +442,9 @@ export class AlertsService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async evaluateJsErrors(projectId: string, env: string) {
+    const rule = await this.rules.get(projectId, env, JS_RULE_ID);
+    if (!rule.enabled) return;
+
     const [current, baselines] = await Promise.all([
       this.fetchSessionErrorRates(projectId, env, false),
       this.fetchSessionErrorRates(projectId, env, true),
@@ -441,7 +456,7 @@ export class AlertsService implements OnModuleInit, OnModuleDestroy {
       if (row.sessions < MIN_ERROR_SESSIONS || !row.route) continue;
       const rate = this.percent(row.error_sessions, row.sessions);
       const baseline = baselineByRoute.get(row.route) ?? null;
-      if (!isRateDegraded(rate, baseline, JS_POOR_PCT, JS_SEVERE_PCT)) continue;
+      if (!isRateDegraded(rate, baseline, rule.poorThreshold, rule.severeThreshold)) continue;
       const fingerprint = this.fingerprint(projectId, env, row.route, 'JS_ERROR');
       active.push(fingerprint);
       await this.persistAlert({
@@ -450,7 +465,7 @@ export class AlertsService implements OnModuleInit, OnModuleDestroy {
         env,
         fingerprint,
         title: `${row.route} JS 错误率升高`,
-        severity: rate >= JS_SEVERE_PCT ? 'S0' : 'S1',
+        severity: rate >= rule.severeThreshold ? 'S0' : 'S1',
         route: row.route,
         metric: 'JS 错误率',
         triggerValue: `${rate.toFixed(2)}%`,
@@ -461,12 +476,16 @@ export class AlertsService implements OnModuleInit, OnModuleDestroy {
         release: row.latest_release || '',
         ruleId: JS_RULE_ID,
         now,
+        webhookUrl: rule.webhookUrl,
       });
     }
     await this.resolveStale(projectId, env, JS_RULE_ID, active, now);
   }
 
   private async evaluateApiErrors(projectId: string, env: string) {
+    const rule = await this.rules.get(projectId, env, API_RULE_ID);
+    if (!rule.enabled) return;
+
     const [current, baselines] = await Promise.all([
       this.fetchApiErrorRates(projectId, env, false),
       this.fetchApiErrorRates(projectId, env, true),
@@ -478,7 +497,7 @@ export class AlertsService implements OnModuleInit, OnModuleDestroy {
       if (row.requests < MIN_API_REQUESTS || !row.api) continue;
       const rate = this.percent(row.failed, row.requests);
       const baseline = baselineByApi.get(row.api) ?? null;
-      if (!isRateDegraded(rate, baseline, API_POOR_PCT, API_SEVERE_PCT)) continue;
+      if (!isRateDegraded(rate, baseline, rule.poorThreshold, rule.severeThreshold)) continue;
       const fingerprint = this.fingerprint(projectId, env, row.api, 'API_ERROR');
       active.push(fingerprint);
       await this.persistAlert({
@@ -487,7 +506,7 @@ export class AlertsService implements OnModuleInit, OnModuleDestroy {
         env,
         fingerprint,
         title: `${row.api} 接口错误率升高`,
-        severity: rate >= API_SEVERE_PCT ? 'S0' : 'S1',
+        severity: rate >= rule.severeThreshold ? 'S0' : 'S1',
         route: row.api,
         metric: 'API 错误率',
         triggerValue: `${rate.toFixed(2)}%`,
@@ -498,6 +517,7 @@ export class AlertsService implements OnModuleInit, OnModuleDestroy {
         release: row.latest_release || '',
         ruleId: API_RULE_ID,
         now,
+        webhookUrl: rule.webhookUrl,
       });
     }
     await this.resolveStale(projectId, env, API_RULE_ID, active, now);
@@ -585,6 +605,7 @@ export class AlertsService implements OnModuleInit, OnModuleDestroy {
     release: string;
     ruleId: string;
     now: Date;
+    webhookUrl?: string;
   }) {
     await this.postgres.query(
       `
@@ -651,6 +672,7 @@ export class AlertsService implements OnModuleInit, OnModuleDestroy {
       triggerValue: input.triggerValue,
       baseline: input.baseline,
       release: input.release,
+      webhookUrl: input.webhookUrl,
     });
   }
 
@@ -679,7 +701,7 @@ export class AlertsService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
-  private async fetchLcpBreaches(projectId: string, env: string) {
+  private async fetchLcpBreaches(projectId: string, env: string, poorThreshold = LCP_THRESHOLD_MS) {
     const result = await this.clickhouse.query({
       query: `
         SELECT
@@ -702,7 +724,7 @@ export class AlertsService implements OnModuleInit, OnModuleDestroy {
       query_params: {
         projectId,
         env,
-        threshold: LCP_THRESHOLD_MS,
+        threshold: poorThreshold,
         minSamples: MIN_SAMPLES,
       },
       format: 'JSONEachRow',
@@ -740,8 +762,8 @@ export class AlertsService implements OnModuleInit, OnModuleDestroy {
       .slice(0, 12);
   }
 
-  private severityFor(lcpP75: number): Severity {
-    return lcpP75 >= LCP_S0_MS ? 'S0' : 'S1';
+  private severityFor(lcpP75: number, severeAt = LCP_S0_MS): Severity {
+    return lcpP75 >= severeAt ? 'S0' : 'S1';
   }
 
   private mapRow(row: AlertDbRow): AlertRowResult {

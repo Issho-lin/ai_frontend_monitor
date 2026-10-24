@@ -13,6 +13,8 @@ export interface AlertNotifyPayload {
   triggerValue: string;
   baseline: string;
   release: string;
+  /** Per-rule webhook; falls back to ALERT_WEBHOOK_URL when empty. */
+  webhookUrl?: string;
 }
 
 /** True when no prior notify, or the dedupe window has elapsed. */
@@ -43,11 +45,14 @@ export class NotifyService {
   constructor(private readonly postgres: PostgresService) {}
 
   /**
-   * POST a compact payload to ALERT_WEBHOOK_URL when configured.
+   * POST JSON to per-rule webhookUrl, else ALERT_WEBHOOK_URL.
    * Skips when silenced / false-positive, or within the ~15m dedupe window.
+   * email on the rule is stored only (placeholder — no SMTP yet).
    */
   async maybeNotify(alert: AlertNotifyPayload): Promise<boolean> {
-    const webhook = (process.env.ALERT_WEBHOOK_URL ?? '').trim();
+    const webhook =
+      (alert.webhookUrl ?? '').trim() ||
+      (process.env.ALERT_WEBHOOK_URL ?? '').trim();
     if (!webhook) {
       return false;
     }
