@@ -332,7 +332,7 @@ function thresholdHint(unit: AlertRule['unit']) {
           type="info"
           :closable="false"
           show-icon
-          title="通知渠道仅为占位字段；真正发送与规则评估需后端告警规则 API。"
+          title="规则写入后端评估服务；Webhook 可走最小通知，邮件仍为占位。"
         />
       </el-form>
       <template #footer>

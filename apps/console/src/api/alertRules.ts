@@ -1,17 +1,13 @@
 /**
  * Console 告警规则（核心指标劣化）API 层 —— M3 最小集
  *
- * 现状：后端已有「触发实例」API（GET/PATCH /api/v1/alerts），规则阈值仍硬编码在
- * apps/api/src/alerts/alerts.service.ts（LCP / JS 错误率 / API 错误率）。
- * 本层为 Console 可配壳；接真后关掉 mock。
- *
- * TODO(backend): 下列路径待后端落地后，将 USE_ALERT_RULES_MOCK 改为 false。
+ * 后端已就绪（apps/api alert-rules）：
  *   GET    /api/v1/alert-rules?projectId=&env=
- *   PATCH  /api/v1/alert-rules/:id
+ *   PATCH  /api/v1/alert-rules/:id?projectId=&env=
  *     body: { poorThreshold?, severeThreshold?, enabled?, webhookUrl?, email? }
  *
- * 约定：规则 id 与后端 rule_id 对齐（lcp-p75-threshold / js-error-rate / api-error-rate），
- * 评估逻辑接真后读库覆盖硬编码常量。
+ * 规则 id：lcp-p75-threshold / js-error-rate / api-error-rate
+ * USE_ALERT_RULES_MOCK=false 走真接口；保留 mock 分支便于本地无后端调试。
  */
 
 export type AlertRuleMetric = 'LCP P75' | 'JS Error Rate' | 'API Error Rate'
@@ -43,8 +39,8 @@ export type UpdateAlertRuleInput = {
   email?: string
 }
 
-/** 后端规则 CRUD 未就绪前走本地 mock；接真路由后改为 false */
-export const USE_ALERT_RULES_MOCK = true
+/** 接真路由；本地无后端时可改回 true */
+export const USE_ALERT_RULES_MOCK = false
 
 function nowIso(): string {
   return new Date().toISOString()
@@ -122,7 +118,6 @@ export function listAlertRules(projectId: string, env: string): Promise<AlertRul
   if (USE_ALERT_RULES_MOCK) {
     return delay().then(() => mockRules.map((r) => ({ ...r })))
   }
-  // TODO(backend): GET /api/v1/alert-rules?projectId=&env=
   const qs = new URLSearchParams({ projectId, env })
   return request<AlertRule[]>(`/api/v1/alert-rules?${qs.toString()}`)
 }
@@ -145,7 +140,6 @@ export async function updateAlertRule(
     row.updatedAt = nowIso()
     return { ...row }
   }
-  // TODO(backend): PATCH /api/v1/alert-rules/:id?projectId=&env=
   const qs = new URLSearchParams({ projectId, env })
   return request<AlertRule>(`/api/v1/alert-rules/${encodeURIComponent(id)}?${qs.toString()}`, {
     method: 'PATCH',
