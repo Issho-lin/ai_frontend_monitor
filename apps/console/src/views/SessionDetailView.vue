@@ -48,6 +48,7 @@ const headerHint = computed(() => {
             {{ session.status }}
           </el-tag>
         </div>
+        <p class="afm-muted intro">本次访问的时间线：打开的页面、体验指标、接口与错误。</p>
         <p class="afm-muted meta">{{ headerHint }}</p>
         <p v-if="session" class="afm-muted meta">
           {{ session.startedAt }} · {{ session.user }} · {{ session.device }}
@@ -96,6 +97,7 @@ const headerHint = computed(() => {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   color: var(--afm-accent);
 }
+.intro { margin: 6px 0 0; font-size: 13px; }
 .meta { margin: 4px 0 0; font-size: 13px; }
 .section { margin-top: 16px; }
 .empty { margin: 8px 0 0; }

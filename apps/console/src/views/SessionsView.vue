@@ -37,7 +37,7 @@ onMounted(() => {
   <div class="afm-page">
     <div class="lead">
       <h2>用户会话</h2>
-      <p class="afm-muted">{{ windowLabel }}的一次访问。点开后看打开了哪个页面、体验指标、接口和错误。这里没有会话回放。</p>
+      <p class="afm-muted">用户会话是同一次连续访问（不是录像、也不是登录账号）。列表看每次访问的状态、页面、设备与停留；点进详情看时间线（页 → 指标 → 接口/错误）。用来判断「这一趟顺不顺」；全站健康度请看 Overview / Pages。</p>
     </div>
     <p v-if="error" class="fallback">接口暂不可用。</p>
 
