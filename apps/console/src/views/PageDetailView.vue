@@ -86,7 +86,7 @@ function openApi(api: string) {
             首屏资源瀑布
             <span class="afm-hint">按加载耗时排序</span>
           </div>
-          <el-table :data="resources" size="default">
+          <el-table v-if="resources.length" :data="resources" size="default">
             <el-table-column label="资源" prop="url" min-width="260" />
             <el-table-column label="类型" prop="type" width="80" />
             <el-table-column prop="sizeKb" width="130">
@@ -100,6 +100,7 @@ function openApi(api: string) {
               <template #default="{ row }">{{ row.failRate }}%</template>
             </el-table-column>
           </el-table>
+          <p v-else class="afm-muted empty">所选条件下暂无资源瀑布数据。</p>
         </div>
 
         <div class="afm-card section">
