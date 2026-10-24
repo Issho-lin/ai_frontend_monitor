@@ -40,7 +40,7 @@ const filteredRows = computed(() => {
   })
 })
 
-/** 筛「有问题」时空列表时，被隐藏的正常会话数（源数据为空则不展示该提示） */
+/** 筛「异常/缓慢」时空列表时，被隐藏的正常会话数（源数据为空则不展示该提示） */
 const hiddenNormalCount = computed(() =>
   rows.value.filter((row) => row.status === '正常').length,
 )
@@ -77,7 +77,7 @@ onMounted(() => {
   <div class="afm-page">
     <div class="lead">
       <h2>用户会话</h2>
-      <p class="afm-muted">同一次连续访问的状态一览。默认只看「有问题」的（异常 / 缓慢），有异常或缓慢再点进去看时间线；全站健康度请看 Overview / Pages。</p>
+      <p class="afm-muted">同一次连续访问的状态一览。默认只看「异常/缓慢」，有异常或缓慢再点进去看时间线；全站健康度请看 Overview / Pages。</p>
     </div>
     <p v-if="error" class="fallback">接口暂不可用。</p>
 
@@ -88,7 +88,7 @@ onMounted(() => {
           <span class="afm-hint">{{ filteredRows.length }} / {{ rows.length }} 条 · 点击行进入详情</span>
         </div>
         <el-radio-group v-model="statusFilter" size="small">
-          <el-radio-button value="problem">有问题</el-radio-button>
+          <el-radio-button value="problem">异常/缓慢</el-radio-button>
           <el-radio-button value="all">全部</el-radio-button>
           <el-radio-button value="异常">异常</el-radio-button>
           <el-radio-button value="缓慢">缓慢</el-radio-button>
