@@ -40,6 +40,23 @@ const filteredRows = computed(() => {
   })
 })
 
+/** 筛「有问题」时空列表时，被隐藏的正常会话数（源数据为空则不展示该提示） */
+const hiddenNormalCount = computed(() =>
+  rows.value.filter((row) => row.status === '正常').length,
+)
+
+const showProblemEmptyHint = computed(
+  () =>
+    statusFilter.value === 'problem'
+    && filteredRows.value.length === 0
+    && rows.value.length > 0
+    && hiddenNormalCount.value > 0,
+)
+
+function showAllSessions() {
+  statusFilter.value = 'all'
+}
+
 function openSession(row: SessionSummary) {
   rememberSession(row)
   void router.push({
@@ -111,9 +128,15 @@ onMounted(() => {
           <template #header><MetricHead label="事件" tip="session_events" /></template>
         </el-table-column>
       </el-table>
-      <p v-else class="afm-muted empty">
-        {{ rows.length ? '当前筛选下没有会话。' : `${windowLabel}还没有会话。` }}
-      </p>
+      <div v-else class="empty">
+        <template v-if="showProblemEmptyHint">
+          <p class="afm-muted">当前没有异常/缓慢，已隐藏 {{ hiddenNormalCount }} 条正常</p>
+          <button type="button" class="empty-action" @click="showAllSessions">查看全部</button>
+        </template>
+        <p v-else class="afm-muted">
+          {{ rows.length ? '当前筛选下没有会话。' : `${windowLabel}还没有会话。` }}
+        </p>
+      </div>
     </div>
   </div>
 </template>
@@ -132,6 +155,17 @@ onMounted(() => {
 }
 .toolbar .afm-section-title { margin: 0; }
 .empty { margin: 8px 0 0; }
+.empty p { margin: 0; }
+.empty-action {
+  margin-top: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--el-color-primary);
+  font: inherit;
+  cursor: pointer;
+}
+.empty-action:hover { text-decoration: underline; }
 .sub { font-size: 12px; margin-top: 2px; }
 .fallback { margin: 12px 0 0; color: var(--afm-warn); font-size: 13px; }
 :deep(.el-table__row) { cursor: pointer; }
