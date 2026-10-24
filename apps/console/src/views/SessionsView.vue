@@ -17,9 +17,9 @@ const statusType = {
   异常: 'danger',
 } as const
 
-type StatusFilter = 'problem' | 'all' | '异常' | '缓慢' | '正常'
+type StatusFilter = 'all' | '异常' | '缓慢' | '正常'
 
-const statusFilter = ref<StatusFilter>('problem')
+const statusFilter = ref<StatusFilter>('all')
 
 const statusRank: Record<SessionSummary['status'], number> = {
   异常: 0,
@@ -30,7 +30,6 @@ const statusRank: Record<SessionSummary['status'], number> = {
 const filteredRows = computed(() => {
   const list = rows.value.filter((row) => {
     if (statusFilter.value === 'all') return true
-    if (statusFilter.value === 'problem') return row.status === '异常' || row.status === '缓慢'
     return row.status === statusFilter.value
   })
   return list.slice().sort((a, b) => {
@@ -39,23 +38,6 @@ const filteredRows = computed(() => {
     return b.startedAt.localeCompare(a.startedAt)
   })
 })
-
-/** 筛「异常/缓慢」时空列表时，被隐藏的正常会话数（源数据为空则不展示该提示） */
-const hiddenNormalCount = computed(() =>
-  rows.value.filter((row) => row.status === '正常').length,
-)
-
-const showProblemEmptyHint = computed(
-  () =>
-    statusFilter.value === 'problem'
-    && filteredRows.value.length === 0
-    && rows.value.length > 0
-    && hiddenNormalCount.value > 0,
-)
-
-function showAllSessions() {
-  statusFilter.value = 'all'
-}
 
 function openSession(row: SessionSummary) {
   rememberSession(row)
@@ -77,7 +59,7 @@ onMounted(() => {
   <div class="afm-page">
     <div class="lead">
       <h2>用户会话</h2>
-      <p class="afm-muted">同一次连续访问的状态一览。默认只看「异常/缓慢」，有异常或缓慢再点进去看时间线；全站健康度请看 Overview / Pages。</p>
+      <p class="afm-muted">同一次连续访问的状态一览。可按异常 / 缓慢 / 正常筛选，点进去看时间线；全站健康度请看 Overview / Pages。</p>
     </div>
     <p v-if="error" class="fallback">接口暂不可用。</p>
 
@@ -88,11 +70,10 @@ onMounted(() => {
           <span class="afm-hint">{{ filteredRows.length }} / {{ rows.length }} 条 · 点击行进入详情</span>
         </div>
         <el-radio-group v-model="statusFilter" size="small">
-          <el-radio-button value="problem">异常/缓慢</el-radio-button>
-          <el-radio-button value="all">全部</el-radio-button>
           <el-radio-button value="异常">异常</el-radio-button>
           <el-radio-button value="缓慢">缓慢</el-radio-button>
           <el-radio-button value="正常">正常</el-radio-button>
+          <el-radio-button value="all">全部</el-radio-button>
         </el-radio-group>
       </div>
       <el-table
@@ -128,15 +109,9 @@ onMounted(() => {
           <template #header><MetricHead label="事件" tip="session_events" /></template>
         </el-table-column>
       </el-table>
-      <div v-else class="empty">
-        <template v-if="showProblemEmptyHint">
-          <p class="afm-muted">当前没有异常/缓慢，已隐藏 {{ hiddenNormalCount }} 条正常</p>
-          <button type="button" class="empty-action" @click="showAllSessions">查看全部</button>
-        </template>
-        <p v-else class="afm-muted">
-          {{ rows.length ? '当前筛选下没有会话。' : `${windowLabel}还没有会话。` }}
-        </p>
-      </div>
+      <p v-else class="afm-muted empty">
+        {{ rows.length ? '当前筛选下没有会话。' : `${windowLabel}还没有会话。` }}
+      </p>
     </div>
   </div>
 </template>
@@ -155,17 +130,6 @@ onMounted(() => {
 }
 .toolbar .afm-section-title { margin: 0; }
 .empty { margin: 8px 0 0; }
-.empty p { margin: 0; }
-.empty-action {
-  margin-top: 8px;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--el-color-primary);
-  font: inherit;
-  cursor: pointer;
-}
-.empty-action:hover { text-decoration: underline; }
 .sub { font-size: 12px; margin-top: 2px; }
 .fallback { margin: 12px 0 0; color: var(--afm-warn); font-size: 13px; }
 :deep(.el-table__row) { cursor: pointer; }
