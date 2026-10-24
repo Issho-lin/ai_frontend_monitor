@@ -51,6 +51,8 @@ services:
       CLICKHOUSE_USER: ${CLICKHOUSE_USER:-afm}
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-CHANGE_ME_DEV_SECRET}
       CLICKHOUSE_DB: ${CLICKHOUSE_DB:-afm}
+      ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
+      ALERT_NOTIFY_DEDUPE_MINUTES: ${ALERT_NOTIFY_DEDUPE_MINUTES:-15}
     depends_on:
       postgres:
         condition: service_healthy

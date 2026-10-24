@@ -20,7 +20,8 @@ CREATE TABLE IF NOT EXISTS alerts (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   silenced_until TIMESTAMPTZ,
-  resolution TEXT
+  resolution TEXT,
+  last_notified_at TIMESTAMPTZ
 );
 
 CREATE INDEX IF NOT EXISTS alerts_project_env_status_idx

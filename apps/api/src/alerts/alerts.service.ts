@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { createClient } from '@clickhouse/client';
 import { formatMetricValue, METRIC_SPECS } from '@ai-frontend-monitor/schema';
+import { NotifyService } from './notify.service';
 import { PostgresService } from './postgres.service';
 
 type Severity = 'S0' | 'S1' | 'S2' | 'S3';
@@ -104,7 +105,10 @@ export class AlertsService implements OnModuleInit, OnModuleDestroy {
   private timer: ReturnType<typeof setInterval> | undefined;
   private evaluating = false;
 
-  constructor(private readonly postgres: PostgresService) {}
+  constructor(
+    private readonly postgres: PostgresService,
+    private readonly notify: NotifyService,
+  ) {}
 
   onModuleInit() {
     void this.runScheduledEvaluation();
@@ -380,6 +384,20 @@ export class AlertsService implements OnModuleInit, OnModuleDestroy {
           RULE_ID,
         ],
       );
+
+      await this.notify.maybeNotify({
+        id,
+        projectId,
+        env,
+        fingerprint,
+        title,
+        severity,
+        route: breach.route,
+        metric: 'LCP P75',
+        triggerValue,
+        baseline,
+        release: breach.release || '',
+      });
     }
 
     if (activeFingerprints.length === 0) {
@@ -620,6 +638,20 @@ export class AlertsService implements OnModuleInit, OnModuleDestroy {
         input.ruleId,
       ],
     );
+
+    await this.notify.maybeNotify({
+      id: input.id,
+      projectId: input.projectId,
+      env: input.env,
+      fingerprint: input.fingerprint,
+      title: input.title,
+      severity: input.severity,
+      route: input.route,
+      metric: input.metric,
+      triggerValue: input.triggerValue,
+      baseline: input.baseline,
+      release: input.release,
+    });
   }
 
   private async resolveStale(projectId: string, env: string, ruleId: string, activeFingerprints: string[], now: Date) {
