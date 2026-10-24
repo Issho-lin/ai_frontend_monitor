@@ -1,0 +1,128 @@
+# Production-shaped stack: data plane (from docker-compose.yml) + app images.
+#
+# Usage (from repo root):
+#   cp .env.example .env   # edit secrets + AFM_PROJECT_TOKENS
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# Console UI:        http://127.0.0.1:8080/
+# Gateway ingest:    http://127.0.0.1:3001/ingest
+# API:               http://127.0.0.1:3000/api/v1/...
+# Demo (optional):   http://127.0.0.1:8081/
+#
+# Put Caddy/nginx with TLS in front of :8080 (console) and :3001 (ingest).
+# See docs/prod-run.md.
+
+services:
+  # Override advertise so other containers reach Kafka as redpanda:9092
+  redpanda:
+    command:
+      - redpanda
+      - start
+      - --smp 1
+      - --overprovisioned
+      - --reserve-memory 0M
+      - --kafka-addr internal://0.0.0.0:9092
+      - --advertise-kafka-addr internal://redpanda:9092
+      - --pandaproxy-addr internal://0.0.0.0:8082
+      - --advertise-pandaproxy-addr internal://redpanda:8082
+      - --schema-registry-addr internal://0.0.0.0:8081
+      - --rpc-addr redpanda:33145
+      - --advertise-rpc-addr redpanda:33145
+      - --node-id 0
+      - --check=false
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: afm-api
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-3000}:3000"
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-afm}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-CHANGE_ME_DEV_SECRET}
+      POSTGRES_DB: ${POSTGRES_DB:-afm}
+      CLICKHOUSE_ENDPOINT: http://clickhouse:8123
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-afm}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-CHANGE_ME_DEV_SECRET}
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB:-afm}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    networks:
+      - monitor-net
+
+  gateway:
+    build:
+      context: .
+      dockerfile: apps/gateway/Dockerfile
+    container_name: afm-gateway
+    restart: unless-stopped
+    ports:
+      - "${GATEWAY_PORT:-3001}:3001"
+    environment:
+      NODE_ENV: production
+      GATEWAY_PORT: 3001
+      KAFKA_BROKER: redpanda:9092
+      AFM_PROJECT_TOKENS: ${AFM_PROJECT_TOKENS:-}
+      INGEST_RATE_LIMIT: ${INGEST_RATE_LIMIT:-120}
+      INGEST_RATE_WINDOW_MS: ${INGEST_RATE_WINDOW_MS:-60000}
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    networks:
+      - monitor-net
+
+  worker:
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    container_name: afm-worker
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      KAFKA_BROKER: redpanda:9092
+      KAFKA_GROUP_ID: ${KAFKA_GROUP_ID:-afm-worker-group}
+      CLICKHOUSE_ENDPOINT: http://clickhouse:8123
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-afm}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-CHANGE_ME_DEV_SECRET}
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB:-afm}
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    networks:
+      - monitor-net
+
+  console:
+    build:
+      context: .
+      dockerfile: apps/console/Dockerfile
+    container_name: afm-console
+    restart: unless-stopped
+    ports:
+      - "${CONSOLE_PORT:-8080}:80"
+    depends_on:
+      - api
+    networks:
+      - monitor-net
+
+  demo:
+    profiles: ["demo"]
+    build:
+      context: .
+      dockerfile: apps/demo/Dockerfile
+    container_name: afm-demo
+    restart: unless-stopped
+    ports:
+      - "${DEMO_PORT:-8081}:80"
+    networks:
+      - monitor-net

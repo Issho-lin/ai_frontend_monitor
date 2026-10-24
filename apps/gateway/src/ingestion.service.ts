@@ -1,19 +1,37 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
 import type { IngestPayload, MetricValues, ResourceType, RUMEvent } from '@ai-frontend-monitor/schema';
 import { createHash, randomUUID } from 'node:crypto';
+import { AuthService } from './auth.service';
 import { QueueService } from './queue.service';
-
-const DEMO_PROJECT_ID = 'demo';
-const DEMO_TOKEN = 'afm-demo-token';
+import { SimpleRateLimiter } from './rate-limit';
+import { redactIngestFields } from './redact';
 
 @Injectable()
 export class IngestionService {
-  constructor(private readonly queueService: QueueService) {}
+  private readonly rateLimiter = new SimpleRateLimiter();
 
-  async ingest(payload: IngestPayload, token?: string) {
-    this.assertAuthorized(payload.projectId, token ?? payload.token);
+  constructor(
+    private readonly queueService: QueueService,
+    private readonly authService: AuthService,
+  ) {}
 
-    const events = this.expandPayload(payload);
+  async ingest(
+    payload: IngestPayload,
+    token?: string,
+    clientKey = 'unknown',
+  ) {
+    const projectId = payload?.projectId;
+    const headerOrBodyToken = token ?? payload?.token;
+
+    const rateKey = `${projectId?.trim() || 'unknown'}|${clientKey}`;
+    if (!this.rateLimiter.allow(rateKey)) {
+      throw new HttpException('Too Many Requests', HttpStatus.TOO_MANY_REQUESTS);
+    }
+
+    this.authService.assertAuthorized(projectId, headerOrBodyToken);
+
+    const scrubbed = redactIngestFields(payload);
+    const events = this.expandPayload(scrubbed);
     if (events.length === 0) {
       return {
         status: 'accepted',
@@ -27,20 +45,6 @@ export class IngestionService {
       status: 'accepted',
       accepted: events.length,
     };
-  }
-
-  private assertAuthorized(projectId: string, token?: string) {
-    if (projectId === DEMO_PROJECT_ID) {
-      if (token && token === DEMO_TOKEN) {
-        return;
-      }
-
-      if (!token) {
-        return;
-      }
-    }
-
-    throw new UnauthorizedException('Invalid project token.');
   }
 
   private expandPayload(payload: IngestPayload): RUMEvent[] {
