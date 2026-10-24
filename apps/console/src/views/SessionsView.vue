@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useSessionsData, type SessionSummary } from '@/composables/useSessionsData'
 import { rememberSession } from '@/composables/sessionNav'
@@ -16,6 +16,29 @@ const statusType = {
   缓慢: 'warning',
   异常: 'danger',
 } as const
+
+type StatusFilter = 'problem' | 'all' | '异常' | '缓慢' | '正常'
+
+const statusFilter = ref<StatusFilter>('problem')
+
+const statusRank: Record<SessionSummary['status'], number> = {
+  异常: 0,
+  缓慢: 1,
+  正常: 2,
+}
+
+const filteredRows = computed(() => {
+  const list = rows.value.filter((row) => {
+    if (statusFilter.value === 'all') return true
+    if (statusFilter.value === 'problem') return row.status === '异常' || row.status === '缓慢'
+    return row.status === statusFilter.value
+  })
+  return list.slice().sort((a, b) => {
+    const byStatus = statusRank[a.status] - statusRank[b.status]
+    if (byStatus !== 0) return byStatus
+    return b.startedAt.localeCompare(a.startedAt)
+  })
+})
 
 function openSession(row: SessionSummary) {
   rememberSession(row)
@@ -37,15 +60,27 @@ onMounted(() => {
   <div class="afm-page">
     <div class="lead">
       <h2>用户会话</h2>
-      <p class="afm-muted">用户会话是同一次连续访问（不是录像、也不是登录账号）。列表看每次访问的状态、页面、设备与停留；点进详情看时间线（页 → 指标 → 接口/错误）。用来判断「这一趟顺不顺」；全站健康度请看 Overview / Pages。</p>
+      <p class="afm-muted">同一次连续访问的状态一览。默认只看「有问题」的（异常 / 缓慢），有异常或缓慢再点进去看时间线；全站健康度请看 Overview / Pages。</p>
     </div>
     <p v-if="error" class="fallback">接口暂不可用。</p>
 
     <div class="afm-card section">
-      <div class="afm-section-title">会话列表<span class="afm-hint">{{ rows.length }} 条 · 点击行进入详情</span></div>
+      <div class="toolbar">
+        <div class="afm-section-title">
+          会话列表
+          <span class="afm-hint">{{ filteredRows.length }} / {{ rows.length }} 条 · 点击行进入详情</span>
+        </div>
+        <el-radio-group v-model="statusFilter" size="small">
+          <el-radio-button value="problem">有问题</el-radio-button>
+          <el-radio-button value="all">全部</el-radio-button>
+          <el-radio-button value="异常">异常</el-radio-button>
+          <el-radio-button value="缓慢">缓慢</el-radio-button>
+          <el-radio-button value="正常">正常</el-radio-button>
+        </el-radio-group>
+      </div>
       <el-table
-        v-if="rows.length"
-        :data="rows"
+        v-if="filteredRows.length"
+        :data="filteredRows"
         size="default"
         @row-click="(row: SessionSummary) => openSession(row)"
       >
@@ -76,7 +111,9 @@ onMounted(() => {
           <template #header><MetricHead label="事件" tip="session_events" /></template>
         </el-table-column>
       </el-table>
-      <p v-else class="afm-muted empty">{{ windowLabel }}还没有会话。</p>
+      <p v-else class="afm-muted empty">
+        {{ rows.length ? '当前筛选下没有会话。' : `${windowLabel}还没有会话。` }}
+      </p>
     </div>
   </div>
 </template>
@@ -85,6 +122,15 @@ onMounted(() => {
 .lead h2 { margin: 0; font-size: 18px; }
 .lead p { margin: 4px 0 0; }
 .section { margin-top: 16px; }
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.toolbar .afm-section-title { margin: 0; }
 .empty { margin: 8px 0 0; }
 .sub { font-size: 12px; margin-top: 2px; }
 .fallback { margin: 12px 0 0; color: var(--afm-warn); font-size: 13px; }
