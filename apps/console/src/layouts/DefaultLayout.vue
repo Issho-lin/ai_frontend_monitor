@@ -14,7 +14,6 @@ import {
   Expand,
   Search,
   User,
-  Setting,
 } from '@element-plus/icons-vue'
 import logoMark from '@/assets/logo-mark.svg'
 import { monitorSearch } from '@/composables/monitorSearch'
@@ -224,10 +223,6 @@ const pageTitle = computed(() => (route.meta?.title as string | undefined) ?? ''
         <el-menu-item v-for="item in workbenchItems" :key="item.key" :index="item.name">
           <el-icon class="nav-icon"><component :is="item.icon" /></el-icon>
           <template #title>{{ item.label }}</template>
-        </el-menu-item>
-        <el-menu-item index="projects">
-          <el-icon class="nav-icon"><Setting /></el-icon>
-          <template #title>项目管理</template>
         </el-menu-item>
         <el-menu-item index="docs">
           <el-icon class="nav-icon"><Document /></el-icon>

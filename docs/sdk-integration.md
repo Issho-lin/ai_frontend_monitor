@@ -1,7 +1,7 @@
 # AFM SDK 接入说明（骨架）
 
 > **状态**：产品刚开优先级 1 文档骨架。验收方向是「可上线使用」，但 **正式环境 URL、采样/限流/脱敏策略尚未由后端落定**——下文对应处用占位符，并以「待补」标明。  
-> **范围**：`packages/sdk` + 本文档。Console「项目 / Token」管理壳见 `apps/console`（路由 `/projects`），后端真实路由未齐前走 mock。  
+> **范围**：`packages/sdk` + 本文档。Token **一期**由服务端配置 / 环境变量发放；Console「项目 / Token」CRUD（路由 `/projects` 代码保留、侧栏入口已搁置）标为**二期**。  
 > **对照**：真实能力以 `packages/sdk` 源码与 `apps/demo` 为准；本地联调见 [local-run-m1.md](./local-run-m1.md)。
 
 ---
@@ -75,7 +75,8 @@ import {
 
 ### Token 说明（占位）
 
-- **正式 Token**：ingest 使用请求头 `x-project-token` + `projectId`。Console 侧可在 **项目管理**（`/projects`）生成 / 吊销 Token：明文只展示一次，服务端仅存 hash。交叉引用：前端壳与 API 路径见 `apps/console/src/api/projects.ts`（`/api/v1/projects`、`/api/v1/projects/:id/tokens`，后端未齐前为 mock）。
+- **一期（推荐主路径）**：Token 由**服务端配置 / 环境变量**发放与轮换（与 Gateway 鉴权配置对齐），业务侧把拿到的值填入 `afmInit({ token })`。ingest 使用请求头 `x-project-token` + `projectId`。**不要**把「去 Console 点按钮发 Token」当成当前上线主路径。
+- **二期（已搁置）**：Console「项目管理」页生成 / 吊销 Token（明文只展示一次，服务端仅存 hash）。前端壳与 API 路径仍保留在 `apps/console`（`/projects`、`apps/console/src/api/projects.ts`），侧栏入口已摘掉，待后端契约齐后再挂导航。
 - **当前 Demo Token**：仅本地 Gateway 硬编码校验可用：`afm-demo-token`，且仅匹配 `projectId=demo`。**不可用于正式环境**。
 - 未传 `token` 时，本地非 demo 项目会被 Gateway 拒绝（`UnauthorizedException`）。
 
@@ -188,7 +189,7 @@ Console Overview 验收时顶栏选同一 `demo` / `production`。详见 [local-
 | 项 | 现状 | 待补内容 |
 |----|------|----------|
 | **正式环境 URL** | SDK 默认本地 `http://127.0.0.1:3001/ingest` | 生产 / 预发 Gateway ingest 基址、HTTPS、跨域 CORS、多区域 |
-| **Token 申请 / 轮换** | 仅本地 `afm-demo-token`；Gateway 硬编码 demo | 项目级可配鉴权、签发与轮换流程、失效策略；Console 项目/Token UI（后端契约后做） |
+| **Token 申请 / 轮换** | 仅本地 `afm-demo-token`；Gateway 硬编码 demo；一期走服务端配置/环境变量 | 项目级可配鉴权、签发与轮换、失效策略；**Console 发 Token UI 为二期**（后端契约后挂回导航） |
 | **采样限流** | SDK 侧已有 `sampleRate`（按 session）；缓冲上限 50/类 | 服务端采样策略、按项目配额、网关限流、与 SDK `sampleRate` 的约定 |
 | **脱敏** | 路由归一化会去掉 query/hash、路径 id 置为 `:id`；**无**通用 PII 脱敏管线 | 报文字段白名单/黑名单、URL/堆栈/自定义 attributes 脱敏规则、合规要求 |
 

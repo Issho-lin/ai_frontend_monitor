@@ -100,8 +100,9 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '项目管理' },
       },
       {
+        // 一期搁置 Console 项目管理 CRUD；/settings 不再误导跳到 /projects
         path: 'settings',
-        redirect: '/projects',
+        redirect: '/docs',
       },
       {
         path: 'onboarding',
