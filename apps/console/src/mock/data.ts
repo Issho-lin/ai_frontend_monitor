@@ -1330,8 +1330,8 @@ pnpm add @ai-frontend-monitor/sdk
 import { afmInit } from '@ai-frontend-monitor/sdk'
 
 afmInit({
-  projectToken: 'PROJECT_TOKEN',
+  projectId: 'PROJECT_ID',
   env: 'production',
-  sampleRate: 1.0,
-  reportUrl: 'https://ingest.example.com/report'
+  token: 'PROJECT_TOKEN',
+  endpoint: 'http://127.0.0.1:3001/ingest',
 })`

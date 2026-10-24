@@ -12,6 +12,7 @@
     "dev": "pnpm build:packages && pnpm dev:infra && concurrently -k -n console,api,gateway,worker -c cyan,green,yellow,magenta \"pnpm dev:console\" \"pnpm dev:api\" \"pnpm dev:gateway\" \"pnpm dev:worker\"",
     "dev:infra": "docker compose up -d --wait postgres clickhouse redis redpanda minio && docker compose up minio-setup",
     "dev:console": "pnpm --filter @ai-frontend-monitor/console dev",
+    "dev:demo": "pnpm --filter @ai-frontend-monitor/demo dev",
     "dev:api": "pnpm --filter @ai-frontend-monitor/api start:dev",
     "dev:gateway": "pnpm --filter @ai-frontend-monitor/gateway start:dev",
     "dev:worker": "pnpm --filter @ai-frontend-monitor/worker start:dev",

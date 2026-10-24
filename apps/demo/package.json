@@ -1,0 +1,22 @@
+{
+  "name": "@ai-frontend-monitor/demo",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -p tsconfig.json --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@ai-frontend-monitor/sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "~6.0.0",
+    "vite": "^8.0.16"
+  },
+  "engines": {
+    "node": "^22.18.0 || >=24.12.0"
+  }
+}
