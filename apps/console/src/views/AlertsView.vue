@@ -1,17 +1,34 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { Search } from '@element-plus/icons-vue'
+import { storeToRefs } from 'pinia'
+import { ElMessage } from 'element-plus'
+import { Search, Setting } from '@element-plus/icons-vue'
 import { useAlertsData } from '@/composables/useAlertsData'
 import MetricTip from '@/components/MetricTip.vue'
 import MetricHead from '@/components/MetricHead.vue'
 import { alertMetricTip } from '@/utils/metricTips'
+import { useFiltersStore } from '@/stores/filters'
+import {
+  USE_ALERT_RULES_MOCK,
+  formatRuleThreshold,
+  listAlertRules,
+  updateAlertRule,
+  type AlertRule,
+} from '@/api/alertRules'
 
 const router = useRouter()
+const filters = useFiltersStore()
+const { currentProject, env } = storeToRefs(filters)
+
 const keyword = ref('')
 const status = ref<string>('all')
 const severity = ref<string>('all')
 const { rows: alertRows, loading, error } = useAlertsData()
+
+const rules = ref<AlertRule[]>([])
+const rulesLoading = ref(false)
+const rulesError = ref<string | null>(null)
 
 const filtered = computed(() =>
   alertRows.value.filter(
@@ -45,6 +62,116 @@ function triage(id: string) {
 
 function onRowClick(row: unknown) {
   go((row as { id: string }).id)
+}
+
+async function loadRules() {
+  rulesLoading.value = true
+  rulesError.value = null
+  try {
+    rules.value = await listAlertRules(currentProject.value, env.value)
+  } catch (err) {
+    rules.value = []
+    rulesError.value = err instanceof Error ? err.message : '加载规则失败'
+  } finally {
+    rulesLoading.value = false
+  }
+}
+
+onMounted(() => {
+  void loadRules()
+})
+
+watch([currentProject, env], () => {
+  void loadRules()
+})
+
+async function onToggleEnabled(rule: AlertRule, enabled: boolean) {
+  const prev = rule.enabled
+  rule.enabled = enabled
+  try {
+    const updated = await updateAlertRule(rule.id, { enabled }, currentProject.value, env.value)
+    const idx = rules.value.findIndex((r) => r.id === rule.id)
+    if (idx >= 0) rules.value[idx] = updated
+    ElMessage.success(enabled ? `已启用「${rule.name}」` : `已停用「${rule.name}」`)
+  } catch (err) {
+    rule.enabled = prev
+    ElMessage.error(err instanceof Error ? err.message : '更新失败')
+  }
+}
+
+const drawer = ref(false)
+const saving = ref(false)
+const editing = reactive({
+  id: '',
+  name: '',
+  metric: '' as AlertRule['metric'] | '',
+  unit: 'ms' as AlertRule['unit'],
+  poorThreshold: 0,
+  severeThreshold: 0,
+  webhookUrl: '',
+  email: '',
+  enabled: true,
+})
+
+function openEdit(rule: AlertRule) {
+  Object.assign(editing, {
+    id: rule.id,
+    name: rule.name,
+    metric: rule.metric,
+    unit: rule.unit,
+    poorThreshold: rule.poorThreshold,
+    severeThreshold: rule.severeThreshold,
+    webhookUrl: rule.webhookUrl,
+    email: rule.email,
+    enabled: rule.enabled,
+  })
+  drawer.value = true
+}
+
+async function saveEdit() {
+  if (!(editing.poorThreshold > 0) || !(editing.severeThreshold > 0)) {
+    ElMessage.warning('请填写有效的不良线与严重线')
+    return
+  }
+  if (editing.severeThreshold < editing.poorThreshold) {
+    ElMessage.warning('严重线应 ≥ 不良线')
+    return
+  }
+  if (editing.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(editing.email.trim())) {
+    ElMessage.warning('邮件地址格式不正确')
+    return
+  }
+  if (editing.webhookUrl && !/^https?:\/\//i.test(editing.webhookUrl.trim())) {
+    ElMessage.warning('Webhook URL 需以 http(s):// 开头')
+    return
+  }
+  saving.value = true
+  try {
+    const updated = await updateAlertRule(
+      editing.id,
+      {
+        poorThreshold: editing.poorThreshold,
+        severeThreshold: editing.severeThreshold,
+        enabled: editing.enabled,
+        webhookUrl: editing.webhookUrl,
+        email: editing.email,
+      },
+      currentProject.value,
+      env.value,
+    )
+    const idx = rules.value.findIndex((r) => r.id === editing.id)
+    if (idx >= 0) rules.value[idx] = updated
+    drawer.value = false
+    ElMessage.success(USE_ALERT_RULES_MOCK ? '规则已保存（本地 mock，待接后端）' : '规则已保存')
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '保存失败')
+  } finally {
+    saving.value = false
+  }
+}
+
+function thresholdHint(unit: AlertRule['unit']) {
+  return unit === 'ms' ? '毫秒' : '%'
 }
 </script>
 
@@ -81,7 +208,7 @@ function onRowClick(row: unknown) {
         <span class="afm-hint">每分钟评估最近 10 分钟：LCP P75、JS 错误率和接口错误率均按各自阈值与前 24 小时基线判断。</span>
       </div>
       <p v-if="loading" class="afm-muted empty">正在读取告警…</p>
-      <el-table v-else :data="filtered" size="default" stripe @row-click="onRowClick">
+      <el-table v-else class="alerts-table" :data="filtered" size="default" stripe @row-click="onRowClick">
         <el-table-column width="100">
           <template #header><MetricHead label="级别" tip="severity" /></template>
           <template #default="{ row }">
@@ -131,6 +258,88 @@ function onRowClick(row: unknown) {
       </el-table>
     </div>
 
+    <div class="afm-card section">
+      <div class="afm-section-title">
+        核心指标告警规则
+        <span class="afm-hint">
+          M3 最小集：可配 Overview 类指标（LCP / 错误率）不良线、严重线与启用开关；通知先占位 Webhook / 邮件。
+          <template v-if="USE_ALERT_RULES_MOCK">当前为本地 mock，未写入评估服务。</template>
+        </span>
+      </div>
+      <p v-if="rulesError" class="fallback">{{ rulesError }}</p>
+      <p v-else-if="rulesLoading" class="afm-muted empty">正在读取规则…</p>
+      <el-table v-else :data="rules" size="default" stripe>
+        <el-table-column label="规则" min-width="200">
+          <template #default="{ row }">
+            <div style="font-weight: 500">{{ row.name }}</div>
+            <div class="afm-muted" style="font-size: 12px; margin-top: 2px">{{ row.id }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="指标" prop="metric" width="140" />
+        <el-table-column label="不良线" width="110">
+          <template #default="{ row }">{{ formatRuleThreshold(row.poorThreshold, row.unit) }}</template>
+        </el-table-column>
+        <el-table-column label="严重线" width="110">
+          <template #default="{ row }">{{ formatRuleThreshold(row.severeThreshold, row.unit) }}</template>
+        </el-table-column>
+        <el-table-column label="通知占位" min-width="220">
+          <template #default="{ row }">
+            <div v-if="row.webhookUrl || row.email" class="notify-cell">
+              <span v-if="row.webhookUrl" class="afm-muted">Webhook · {{ row.webhookUrl }}</span>
+              <span v-if="row.email" class="afm-muted">邮件 · {{ row.email }}</span>
+            </div>
+            <span v-else class="afm-muted">未配置</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="启用" width="90">
+          <template #default="{ row }">
+            <el-switch
+              :model-value="row.enabled"
+              @change="(v: string | number | boolean) => onToggleEnabled(row, Boolean(v))"
+            />
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="100">
+          <template #default="{ row }">
+            <el-button size="small" type="primary" link :icon="Setting" @click="openEdit(row)">配置</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </div>
+
+    <el-drawer v-model="drawer" title="配置告警规则" size="420px" destroy-on-close>
+      <el-form label-position="top">
+        <el-form-item label="规则">
+          <div>{{ editing.name }}</div>
+          <div class="afm-muted" style="font-size: 12px">{{ editing.id }} · {{ editing.metric }}</div>
+        </el-form-item>
+        <el-form-item :label="`不良线（${thresholdHint(editing.unit)}）`">
+          <el-input-number v-model="editing.poorThreshold" :min="0" :step="editing.unit === 'ms' ? 100 : 0.5" style="width: 100%" />
+        </el-form-item>
+        <el-form-item :label="`严重线（${thresholdHint(editing.unit)}）`">
+          <el-input-number v-model="editing.severeThreshold" :min="0" :step="editing.unit === 'ms' ? 100 : 0.5" style="width: 100%" />
+        </el-form-item>
+        <el-form-item label="启用">
+          <el-switch v-model="editing.enabled" />
+        </el-form-item>
+        <el-form-item label="Webhook URL（占位）">
+          <el-input v-model="editing.webhookUrl" placeholder="https://example.com/hooks/alert" clearable />
+        </el-form-item>
+        <el-form-item label="邮件地址（占位）">
+          <el-input v-model="editing.email" placeholder="oncall@example.com" clearable />
+        </el-form-item>
+        <el-alert
+          type="info"
+          :closable="false"
+          show-icon
+          title="通知渠道仅为占位字段；真正发送与规则评估需后端告警规则 API。"
+        />
+      </el-form>
+      <template #footer>
+        <el-button @click="drawer = false">取消</el-button>
+        <el-button type="primary" :loading="saving" @click="saveEdit">保存</el-button>
+      </template>
+    </el-drawer>
   </div>
 </template>
 
@@ -145,20 +354,13 @@ function onRowClick(row: unknown) {
 }
 .fallback { margin: 12px 0 0; color: var(--afm-warn); font-size: 13px; }
 .empty { margin: 8px 0; }
-:deep(.el-table__row) {
+.alerts-table :deep(.el-table__row) {
   cursor: pointer;
 }
-.rule {
-  display: grid;
-  grid-template-columns: 1fr auto auto;
-  gap: 16px;
-  align-items: center;
-  padding: 12px 0;
-  border-top: 1px solid var(--afm-border);
-}
-.rule p {
-  margin: 4px 0 0;
-  color: var(--afm-text-muted);
+.notify-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   font-size: 12px;
 }
 </style>
