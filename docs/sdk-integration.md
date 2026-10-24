@@ -1,7 +1,7 @@
-# AFM SDK 接入说明（骨架）
+# AFM SDK 接入说明
 
-> **状态**：产品刚开优先级 1 文档骨架。验收方向是「可上线使用」，但 **正式环境 URL、采样/限流/脱敏策略尚未由后端落定**——下文对应处用占位符，并以「待补」标明。  
-> **范围**：`packages/sdk` + 本文档。Token **一期**由服务端配置 / 环境变量发放；Console「项目 / Token」CRUD（路由 `/projects` 代码保留、侧栏入口已搁置）标为**二期**。  
+> **状态**：Gateway 项目 Token 鉴权 / 限流 / 脱敏契约已定稿，见 [project-token-contract.md](./project-token-contract.md)、[prod-run.md](./prod-run.md)。  
+> **范围**：`packages/sdk` + 本文档。Token 由 Gateway 环境变量映射发放；**Console 无项目 CRUD / Token 铸造**（顶栏填 `projectId`，SDK 带 token）。  
 > **对照**：真实能力以 `packages/sdk` 源码与 `apps/demo` 为准；本地联调见 [local-run-m1.md](./local-run-m1.md)。
 
 ---
@@ -63,35 +63,39 @@ import {
 
 | 字段 | 必填 | 说明 |
 |------|------|------|
-| `projectId` | 是 | 项目标识，与 Console / Gateway 侧一致 |
+| `projectId` | 是 | 项目标识；写入 ingest **body**（或可由查询串携带，SDK 走 body） |
 | `env` | 是 | 运行环境（schema 的 `RuntimeEnv`，Demo 使用 `production`） |
 | `endpoint` | 否 | 上报地址；默认 `http://127.0.0.1:3001/ingest` |
-| `token` | 否 | 项目 Token；fetch 走请求头 `x-project-token`，beacon 写入 body |
+| `token` | 否* | 项目 Token；fetch 走请求头 `x-project-token`，beacon 写入 body 的 `token` 字段作回退 |
 | `release` | 否 | 构建版本；未设时读 `<meta name="afm-release">` 或 `window.__AFM_RELEASE__` |
-| `sampleRate` | 否 | 采样率，默认 `1`（全量）；按 session 决定是否采样 |
+| `sampleRate` | 否 | 客户端采样率，默认 `1`（全量）；按 session 决定是否采样 |
 | `autoTrack` | 否 | 默认 `true`：自动采集 PV / Web Vitals / 错误 / fetch·XHR |
 | `sessionId` / `userIdHash` | 否 | 未设则 SDK 在 sessionStorage / localStorage 生成并持久化 |
 | `sdkVersion` / `defaultRoute` / `defaultPageUrl` | 否 | 一般可省略 |
 
-### Token 说明（占位）
+\* Gateway 要求 `projectId` + token 均存在且匹配配置；未传 `token` 会被拒（`401`）。
 
-- **一期（推荐主路径）**：Token 由**服务端配置 / 环境变量**发放与轮换（与 Gateway 鉴权配置对齐），业务侧把拿到的值填入 `afmInit({ token })`。ingest 使用请求头 `x-project-token` + `projectId`。**不要**把「去 Console 点按钮发 Token」当成当前上线主路径。
-- **二期（已搁置）**：Console「项目管理」页生成 / 吊销 Token（明文只展示一次，服务端仅存 hash）。前端壳与 API 路径仍保留在 `apps/console`（`/projects`、`apps/console/src/api/projects.ts`），侧栏入口已摘掉，待后端契约齐后再挂导航。
-- **当前 Demo Token**：仅本地 Gateway 硬编码校验可用：`afm-demo-token`，且仅匹配 `projectId=demo`。**不可用于正式环境**。
-- 未传 `token` 时，本地非 demo 项目会被 Gateway 拒绝（`UnauthorizedException`）。
+### Token 与 Console（定稿）
+
+- **鉴权契约**：`POST /ingest` 必带 header `x-project-token` + body/query `projectId`。Token 映射来自 Gateway 环境变量 `AFM_PROJECT_TOKENS`（或别名 `PROJECT_TOKENS`）JSON，例如 `{"demo":"afm-demo-token"}`。未配置时 Gateway **默认仍认** `demo` + `afm-demo-token`。完整规则见 [project-token-contract.md](./project-token-contract.md)。
+- **Console**：当前 **无** 项目 CRUD / Token 铸造 UI。验收与排障时在顶栏填写与 SDK 一致的 `projectId`（及 `env`）；SDK 侧用 `afmInit({ projectId, token })` 带上映射表中的明文 token。
+- **轮换**：改 Gateway 环境变量中的 JSON 映射并重启 gateway；业务侧同步更新 `afmInit` 的 `token`。
+- **Demo 默认**：本地仍可用 `projectId: 'demo'`、`token: 'afm-demo-token'`（与默认映射一致）。**不要**把 demo token 用于正式环境——生产请在 `.env` / compose 中配置真实映射，见 [prod-run.md](./prod-run.md)。
 
 ### 最小初始化示例
 
 ```ts
 afmInit({
-  projectId: 'demo', // 正式：替换为你的 projectId
+  projectId: 'demo', // 正式：替换为 AFM_PROJECT_TOKENS 中的 key
   env: 'production',
-  token: 'afm-demo-token', // 正式：替换为后端签发的 project token（占位）
-  endpoint: 'http://127.0.0.1:3001/ingest', // 正式：替换为生产 ingest URL（占位）
+  token: 'afm-demo-token', // 正式：替换为该 projectId 对应的 token
+  endpoint: 'http://127.0.0.1:3001/ingest', // 正式：见下文「正式环境 URL」
   // autoTrack 默认 true
   // sampleRate 默认 1
 })
 ```
+
+生产形部署示例：`endpoint: 'https://ingest.example.com/ingest'`，并继续发送 `x-project-token` + `projectId`（见 [prod-run.md](./prod-run.md) HTTPS 说明）。
 
 ---
 
@@ -122,6 +126,16 @@ afmInit({
 | `afmFlush` | 立即刷出缓冲（可选 `{ beacon: true }`） |
 
 另导出底层采集工具（一般业务无需直接用）：`installErrorCollector`、`installNetworkCollector`、`installWebVitalCollector`、`installNavigationCollector`、`collectResources`、`normalizeRoute`、`computeStackHash` 等。
+
+### SDK 与契约对齐（已核对）
+
+`packages/sdk` 当前实现与定稿契约一致，无需为鉴权改 SDK：
+
+| 契约项 | SDK 行为 |
+|--------|----------|
+| Header `x-project-token` | `transport.ts`：fetch 时若 payload 有 `token` 则设置该头 |
+| Body `projectId` | `buildPayload` 写入 `projectId` |
+| Beacon 回退 | `sendBeacon` 无法自定义头；token 留在 JSON body 的 `token` 字段（Gateway 接受 header 缺失时的 body 回退） |
 
 ---
 
@@ -169,7 +183,7 @@ await afmTrackError({
 })
 ```
 
-**Demo 鉴权（与 Gateway 硬编码一致）**：
+**Demo 鉴权（与 Gateway 默认映射一致；非硬编码特例）**：
 
 | 字段 | 值 |
 |------|-----|
@@ -178,27 +192,61 @@ await afmTrackError({
 | `token` | `afm-demo-token` |
 | `endpoint` | `http://127.0.0.1:3001/ingest` |
 
-Console Overview 验收时顶栏选同一 `demo` / `production`。详见 [local-run-m1.md](./local-run-m1.md)。
+> 接入示例仍正确：未配置 `AFM_PROJECT_TOKENS` 时 Gateway 默认仍认上表。若你在 `.env` 里改了映射，Demo / SDK 需同步改 `token`。
+
+Console Overview 验收时顶栏填同一 `demo` / `production`。详见 [local-run-m1.md](./local-run-m1.md)。
 
 ---
 
-## 5. 待补（等后端落点）
+## 5. 正式环境：URL / Token / 限流 / 脱敏（定稿摘要）
 
-以下条目 **当前文档仅占位**，正式上线前需后端 / 平台契约补齐后再改本文：
+细节以契约文档为准；此处供接入方快速对照。
 
-| 项 | 现状 | 待补内容 |
-|----|------|----------|
-| **正式环境 URL** | SDK 默认本地 `http://127.0.0.1:3001/ingest` | 生产 / 预发 Gateway ingest 基址、HTTPS、跨域 CORS、多区域 |
-| **Token 申请 / 轮换** | 仅本地 `afm-demo-token`；Gateway 硬编码 demo；一期走服务端配置/环境变量 | 项目级可配鉴权、签发与轮换、失效策略；**Console 发 Token UI 为二期**（后端契约后挂回导航） |
-| **采样限流** | SDK 侧已有 `sampleRate`（按 session）；缓冲上限 50/类 | 服务端采样策略、按项目配额、网关限流、与 SDK `sampleRate` 的约定 |
-| **脱敏** | 路由归一化会去掉 query/hash、路径 id 置为 `:id`；**无**通用 PII 脱敏管线 | 报文字段白名单/黑名单、URL/堆栈/自定义 attributes 脱敏规则、合规要求 |
+### 正式环境 URL
 
-其它可选后续（非本骨架必填，但上线常需）：npm 正式发包与版本策略、Source Map / release 关联、SSR 注意点（SDK 在无 `window` 时采集器为空操作，但仍应在浏览器入口 `afmInit`）。
+| 项 | 说明 |
+|----|------|
+| 本地默认 | SDK `endpoint` 默认 `http://127.0.0.1:3001/ingest` |
+| 生产形本机 | Compose 后 Gateway 宿主端口默认 `3001`；见 [prod-run.md](./prod-run.md) |
+| 公网 | 在 Caddy/nginx 等前终止 TLS，将 `endpoint` 指到 `https://ingest.example.com/ingest`（示例主机名见 prod-run） |
+| CORS | 由 Gateway / 反代配置；SDK 使用 `fetch` + JSON，跨域需允许 `POST` 与 `x-project-token` |
+
+### Token 申请 / 轮换
+
+| 项 | 定稿 |
+|----|------|
+| 配置 | `AFM_PROJECT_TOKENS='{"demo":"afm-demo-token","acme":"…"}'`（优先）；未设时可用 `PROJECT_TOKENS` |
+| 默认 | 两者皆空 → `{"demo":"afm-demo-token"}` |
+| Console | **无** 项目 CRUD / 发 Token UI；顶栏填 `projectId`，业务 SDK 带对应 token |
+| 轮换 | 改 env JSON → 重启 gateway → 业务更新 `afmInit({ token })` |
+
+### 采样与限流
+
+| 层 | 行为 |
+|----|------|
+| SDK | `sampleRate`（按 session）；缓冲上限 50/类 |
+| Gateway | 内存固定窗口：`INGEST_RATE_LIMIT`（默认 `120`）/ `INGEST_RATE_WINDOW_MS`（默认 `60000`）；键 `projectId\|clientIp`；超限 `429` |
+
+### 脱敏
+
+Gateway 在写入 Kafka 前 scrub（见契约「Field redaction」与 `apps/gateway/src/redact.ts`）：
+
+- `context.attributes` 敏感键（password、token、email、phone 等）→ 掩码或 `[REDACTED]`
+- `pageUrl` / `apiTimings[].url` / `resources[].url` 上同名 query → `[REDACTED]`
+- 错误 `message` / `stack` **不**剥（便于排障）
+- SDK 侧另有路由归一化（去 query/hash、路径 id → `:id`）
+
+完整表与 curl 示例：[project-token-contract.md](./project-token-contract.md)。
+
+其它可选后续（非接入必填）：npm 正式发包与版本策略、Source Map / release 关联、SSR 注意点（SDK 在无 `window` 时采集器为空操作，但仍应在浏览器入口 `afmInit`）。
 
 ---
 
 ## 相关文档
 
+- [project-token-contract.md](./project-token-contract.md) — ingest 鉴权、限流、脱敏定稿
+- [prod-run.md](./prod-run.md) — 生产形 Compose / HTTPS / ingest 主机
 - [M1 本地怎么跑](./local-run-m1.md) — Demo → Gateway → Worker → Console
 - `apps/demo/README.md` — Demo 启动与鉴权摘要
 - `packages/sdk/src/index.ts` — 导出 API 与 `AfmInitOptions` 定义
+- `packages/sdk/src/transport.ts` — `x-project-token` 发送实现
