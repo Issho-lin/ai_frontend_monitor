@@ -1,4 +1,4 @@
-import { afmInit, afmTrackPageView } from '@ai-frontend-monitor/sdk'
+import { afmInit, afmTrackApiTiming, afmTrackError, afmTrackPageView } from '@ai-frontend-monitor/sdk'
 
 const ENDPOINT = 'http://127.0.0.1:3001/ingest'
 
@@ -26,6 +26,8 @@ app.innerHTML = `
     <div style="display:flex; gap:0.75rem; flex-wrap:wrap; margin-top:1rem;">
       <button id="pv" type="button">Report another PV</button>
       <button id="nav" type="button">Push hash route (auto PV)</button>
+      <button id="api" type="button">上报一条 API Timing</button>
+      <button id="err" type="button">抛一个 Error</button>
     </div>
     <pre id="log" style="margin-top:1.25rem; background:#f4f4f5; padding:0.75rem; border-radius:6px; font-size:0.8rem; white-space:pre-wrap;"></pre>
   </main>
@@ -58,6 +60,47 @@ document.querySelector('#nav')!.addEventListener('click', () => {
   location.hash = next
   log(`navigated to ${next} (auto PV if route changed)`)
   statusEl.textContent = `Hash route → ${next}. Auto page-view should fire.`
+})
+
+document.querySelector('#api')!.addEventListener('click', () => {
+  const sample = {
+    apiRoute: '/api/v1/overview',
+    method: 'GET',
+    url: 'http://127.0.0.1:3000/api/v1/overview?projectId=demo&env=production',
+    statusCode: 200,
+    duration: 128,
+    route: '/',
+  }
+  void afmTrackApiTiming(sample)
+    .then(() => {
+      log(
+        `afmTrackApiTiming() sent — ${sample.method} ${sample.apiRoute} ${sample.statusCode} ${sample.duration}ms`,
+      )
+      statusEl.textContent = 'API Timing sent — check Console APIs / CH api_timing.'
+    })
+    .catch((err: unknown) => {
+      log(`afmTrackApiTiming failed: ${String(err)}`)
+      statusEl.textContent = 'API Timing failed — is gateway on :3001?'
+    })
+})
+
+document.querySelector('#err')!.addEventListener('click', () => {
+  const sample = {
+    name: 'DemoError',
+    message: 'M2 smoke: intentional demo error',
+    stack: 'DemoError: M2 smoke: intentional demo error\n    at HTMLButtonElement.<anonymous> (demo)',
+    kind: 'js' as const,
+    route: '/',
+  }
+  void afmTrackError(sample)
+    .then(() => {
+      log(`afmTrackError() sent — ${sample.name}: ${sample.message}`)
+      statusEl.textContent = 'Error sent — check Console Errors / CH error.'
+    })
+    .catch((err: unknown) => {
+      log(`afmTrackError failed: ${String(err)}`)
+      statusEl.textContent = 'Error failed — is gateway on :3001?'
+    })
 })
 
 console.info(
