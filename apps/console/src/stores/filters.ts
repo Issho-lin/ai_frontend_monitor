@@ -7,9 +7,10 @@ export type DeviceOption = 'all' | 'desktop' | 'mobile' | 'tablet'
 export type TimeRange = '24h' | '7d' | '30d'
 
 export const useFiltersStore = defineStore('filters', () => {
-  const projects: ProjectOption[] = [
+  /** 顶栏应用切换；项目管理页加载/变更后会同步写入 */
+  const projects = ref<ProjectOption[]>([
     { id: 'demo', name: 'demo' },
-  ]
+  ])
 
   const currentProject = ref<string>('demo')
   const env = ref<EnvOption>('production')

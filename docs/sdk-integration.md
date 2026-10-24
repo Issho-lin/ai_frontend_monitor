@@ -1,7 +1,7 @@
 # AFM SDK 接入说明（骨架）
 
-> **状态**：产品刚开优先级 1 文档骨架。验收方向是「可上线使用」，但 **正式环境 URL、项目 Token 契约、采样/限流/脱敏策略尚未由后端落定**——下文对应处用占位符，并以「待补」标明。  
-> **范围**：`packages/sdk` + 本文档；Console 项目/Token UI 等后端契约后再做，不在此任务改 Console。  
+> **状态**：产品刚开优先级 1 文档骨架。验收方向是「可上线使用」，但 **正式环境 URL、采样/限流/脱敏策略尚未由后端落定**——下文对应处用占位符，并以「待补」标明。  
+> **范围**：`packages/sdk` + 本文档。Console「项目 / Token」管理壳见 `apps/console`（路由 `/projects`），后端真实路由未齐前走 mock。  
 > **对照**：真实能力以 `packages/sdk` 源码与 `apps/demo` 为准；本地联调见 [local-run-m1.md](./local-run-m1.md)。
 
 ---
@@ -75,7 +75,7 @@ import {
 
 ### Token 说明（占位）
 
-- **正式 Token**：应由后端可配鉴权提供（Console 项目 Token 申请 / 轮换 UI **待后端契约**，本阶段不改 Console）。
+- **正式 Token**：ingest 使用请求头 `x-project-token` + `projectId`。Console 侧可在 **项目管理**（`/projects`）生成 / 吊销 Token：明文只展示一次，服务端仅存 hash。交叉引用：前端壳与 API 路径见 `apps/console/src/api/projects.ts`（`/api/v1/projects`、`/api/v1/projects/:id/tokens`，后端未齐前为 mock）。
 - **当前 Demo Token**：仅本地 Gateway 硬编码校验可用：`afm-demo-token`，且仅匹配 `projectId=demo`。**不可用于正式环境**。
 - 未传 `token` 时，本地非 demo 项目会被 Gateway 拒绝（`UnauthorizedException`）。
 

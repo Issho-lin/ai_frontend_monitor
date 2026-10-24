@@ -94,8 +94,14 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '接入文档' },
       },
       {
+        path: 'projects',
+        name: 'projects',
+        component: () => import('@/views/ProjectsView.vue'),
+        meta: { title: '项目管理' },
+      },
+      {
         path: 'settings',
-        redirect: '/docs',
+        redirect: '/projects',
       },
       {
         path: 'onboarding',

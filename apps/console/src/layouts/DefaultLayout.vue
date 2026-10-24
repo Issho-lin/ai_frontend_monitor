@@ -14,6 +14,7 @@ import {
   Expand,
   Search,
   User,
+  Setting,
 } from '@element-plus/icons-vue'
 import logoMark from '@/assets/logo-mark.svg'
 import { monitorSearch } from '@/composables/monitorSearch'
@@ -25,8 +26,7 @@ const router = useRouter()
 const collapse = ref(false)
 const refreshTick = ref(0)
 const filters = useFiltersStore()
-const { currentProject, env, version, versions, timeRange } = storeToRefs(filters)
-const projects = filters.projects
+const { currentProject, env, version, versions, timeRange, projects } = storeToRefs(filters)
 const alertCount = ref(0)
 const searchText = ref('')
 const searchOpen = ref(false)
@@ -224,6 +224,10 @@ const pageTitle = computed(() => (route.meta?.title as string | undefined) ?? ''
         <el-menu-item v-for="item in workbenchItems" :key="item.key" :index="item.name">
           <el-icon class="nav-icon"><component :is="item.icon" /></el-icon>
           <template #title>{{ item.label }}</template>
+        </el-menu-item>
+        <el-menu-item index="projects">
+          <el-icon class="nav-icon"><Setting /></el-icon>
+          <template #title>项目管理</template>
         </el-menu-item>
         <el-menu-item index="docs">
           <el-icon class="nav-icon"><Document /></el-icon>
