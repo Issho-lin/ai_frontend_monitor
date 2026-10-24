@@ -1,8 +1,9 @@
 # Build context: repository root (optional smoke UI)
-FROM node:22.22.1-bookworm-slim AS build
+FROM node:22-bookworm-slim AS build
 WORKDIR /app
 RUN corepack enable && corepack prepare pnpm@11.7.0 --activate
-COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc* ./
+RUN echo 'registry=https://registry.npmmirror.com' > .npmrc
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY packages ./packages
 COPY apps/demo ./apps/demo
 RUN pnpm install --frozen-lockfile --filter @ai-frontend-monitor/demo...

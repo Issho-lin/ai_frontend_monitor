@@ -12,14 +12,25 @@ export class QueueService implements OnModuleDestroy {
   });
 
   private producer: Producer | null = null;
+  private connecting: Promise<Producer> | null = null;
 
   private async getProducer() {
-    if (!this.producer) {
-      this.producer = this.kafka.producer();
-      await this.producer.connect();
+    if (this.producer) {
+      return this.producer;
     }
 
-    return this.producer;
+    if (!this.connecting) {
+      this.connecting = (async () => {
+        const producer = this.kafka.producer();
+        await producer.connect();
+        this.producer = producer;
+        return producer;
+      })().finally(() => {
+        this.connecting = null;
+      });
+    }
+
+    return this.connecting;
   }
 
   async publish(events: RUMEvent[]) {

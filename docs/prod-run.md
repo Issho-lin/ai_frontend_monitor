@@ -105,3 +105,16 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile demo d
 | worker | `apps/worker/Dockerfile` |
 | console | `apps/console/Dockerfile` (+ `apps/console/nginx.conf`) |
 | demo | `apps/demo/Dockerfile` |
+
+## Base images / registry notes
+
+If `docker.io` pulls time out (common on some networks), pre-pull and retag:
+
+```bash
+docker pull docker.m.daocloud.io/library/node:22-bookworm-slim
+docker tag docker.m.daocloud.io/library/node:22-bookworm-slim node:22-bookworm-slim
+docker pull docker.m.daocloud.io/library/nginx:1.27-alpine
+docker tag docker.m.daocloud.io/library/nginx:1.27-alpine nginx:1.27-alpine
+```
+
+App Dockerfiles write `.npmrc` with `registry.npmmirror.com` during build to speed `pnpm install` when `registry.npmjs.org` is slow.
