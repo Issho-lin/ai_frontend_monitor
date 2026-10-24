@@ -1,6 +1,8 @@
 import { onMounted, ref } from 'vue'
 import { monitorSearch } from '@/composables/monitorSearch'
 
+export type { SessionStep } from '@/composables/useSessionDetailData'
+
 export interface SessionSummary {
   id: string
   user: string
@@ -16,19 +18,10 @@ export interface SessionSummary {
   startedAt: string
 }
 
-export interface SessionStep {
-  at: string
-  title: string
-  detail: string
-  bad: boolean
-}
-
 export function useSessionsData() {
   const rows = ref<SessionSummary[]>([])
-  const steps = ref<SessionStep[]>([])
   const loading = ref(false)
   const error = ref<string | null>(null)
-  const detailError = ref<string | null>(null)
 
   async function fetchSessions() {
     loading.value = true
@@ -45,31 +38,14 @@ export function useSessionsData() {
     }
   }
 
-  async function fetchDetail(sessionId: string) {
-    steps.value = []
-    detailError.value = null
-    if (!sessionId) return
-    try {
-      const response = await fetch(`/api/v1/sessions/detail?${monitorSearch({ sessionId }).toString()}`)
-      if (!response.ok) throw new Error(`Session detail failed: ${response.status}`)
-      steps.value = (await response.json()) as SessionStep[]
-    } catch (err) {
-      detailError.value = err instanceof Error ? err.message : 'Unknown error'
-      steps.value = []
-    }
-  }
-
   onMounted(() => {
     void fetchSessions()
   })
 
   return {
     rows,
-    steps,
     loading,
     error,
-    detailError,
     fetchSessions,
-    fetchDetail,
   }
 }

@@ -8,6 +8,7 @@ import EChart from '@/components/EChart.vue'
 import { useErrorsData } from '@/composables/useErrorsData'
 import { useOverviewData } from '@/composables/useOverviewData'
 import { useSessionsData } from '@/composables/useSessionsData'
+import { rememberSession } from '@/composables/sessionNav'
 import { errorActivity } from '@/utils/errorActivity'
 import { metricTip } from '@/utils/metricTips'
 import { useWindowLabel } from '@/composables/useWindowLabel'
@@ -29,6 +30,11 @@ const {
 } = useOverviewData()
 const { rows: errorRows, error: errorsError } = useErrorsData()
 const { rows: sessions, error: sessionsError } = useSessionsData()
+
+function openSession(item: (typeof sessions.value)[number]) {
+  rememberSession(item)
+  void router.push({ name: 'session-detail', params: { id: item.id } })
+}
 
 const issues = computed(() =>
   errorRows.value
@@ -360,7 +366,7 @@ function openIssue(id: string) {
           :key="item.id"
           class="session"
           type="button"
-          @click="router.push({ name: 'sessions', query: { id: item.id } })"
+          @click="openSession(item)"
         >
           <span>
             <strong>{{ item.route }}</strong>

@@ -58,6 +58,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '用户会话' },
       },
       {
+        path: 'sessions/:id',
+        name: 'session-detail',
+        component: () => import('@/views/SessionDetailView.vue'),
+        meta: { title: '会话详情' },
+      },
+      {
         path: 'releases',
         name: 'releases',
         component: () => import('@/views/ReleasesView.vue'),

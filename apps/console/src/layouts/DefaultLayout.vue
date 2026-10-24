@@ -122,7 +122,7 @@ function openAlert(id: string) {
 
 function openSession(id: string) {
   closeSearch()
-  void router.push({ name: 'sessions', query: { id } })
+  void router.push({ name: 'session-detail', params: { id } })
 }
 
 function openApi(api: string) {

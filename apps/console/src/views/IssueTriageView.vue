@@ -73,7 +73,7 @@ function formatSize(bytes: number) {
             class="head-link"
             link
             type="primary"
-            @click="router.push({ name: 'sessions', query: { id: model.sessionId } })"
+            @click="router.push({ name: 'session-detail', params: { id: model.sessionId } })"
           >
             查看会话 {{ model.sessionId }}
           </el-button>
