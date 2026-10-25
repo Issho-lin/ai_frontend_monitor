@@ -52,6 +52,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '接口详情' },
       },
       {
+        path: 'issues',
+        name: 'issues',
+        component: () => import('@/views/IssuesView.vue'),
+        meta: { title: '待处理' },
+      },
+      {
         path: 'sessions',
         name: 'sessions',
         component: () => import('@/views/SessionsView.vue'),

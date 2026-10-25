@@ -14,6 +14,7 @@ import {
   Expand,
   Search,
   User,
+  Tickets,
 } from '@element-plus/icons-vue'
 import logoMark from '@/assets/logo-mark.svg'
 import { monitorSearch } from '@/composables/monitorSearch'
@@ -192,6 +193,7 @@ const workbenchItems = [
   { key: 'errors', label: '异常中心', icon: Warning, name: 'errors' },
   { key: 'pages', label: '性能体验', icon: DataAnalysis, name: 'pages' },
   { key: 'apis', label: '请求分析', icon: Connection, name: 'apis' },
+  { key: 'issues', label: '待处理', icon: Tickets, name: 'issues' },
   { key: 'sessions', label: '用户会话', icon: User, name: 'sessions' },
   { key: 'releases', label: '版本对比', icon: DataAnalysis, name: 'releases' },
   { key: 'alerts', label: '告警中心', icon: Bell, name: 'alerts' },
