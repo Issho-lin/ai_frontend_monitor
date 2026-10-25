@@ -4,10 +4,9 @@ import { useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { ElMessage } from 'element-plus'
 import { useFiltersStore } from '@/stores/filters'
-import { useWindowLabel } from '@/composables/useWindowLabel'
 import {
   USE_ISSUES_MOCK,
-  issueKindLabel,
+  formatWindowHours,
   issueStatusLabel,
   listIssues,
   patchIssueAction,
@@ -19,8 +18,7 @@ import {
 
 const router = useRouter()
 const filters = useFiltersStore()
-const { currentProject, env } = storeToRefs(filters)
-const windowLabel = useWindowLabel()
+const { currentProject, env, timeRange } = storeToRefs(filters)
 
 const rows = ref<Issue[]>([])
 const loading = ref(false)
@@ -41,6 +39,13 @@ const statusTagType: Record<IssueWorkflowStatus, 'danger' | 'warning' | 'success
   resolved: 'success',
 }
 
+const windowHours = computed(() => {
+  if (timeRange.value === '7d') return 168
+  if (timeRange.value === '30d') return 720
+  return 24
+})
+
+const windowLabel = computed(() => formatWindowHours(windowHours.value))
 const filteredCount = computed(() => rows.value.length)
 
 async function loadIssues() {
@@ -52,8 +57,8 @@ async function loadIssues() {
       env: env.value,
       kind: kindFilter.value,
       workflowStatus: statusFilter.value,
-      // mock 不强制按 window 过滤，避免筛空；真 API 可带 window
-      window: USE_ISSUES_MOCK ? undefined : windowLabel.value,
+      // mock 不强制按窗口过滤，避免筛空；接真后带 windowHours
+      windowHours: USE_ISSUES_MOCK ? undefined : windowHours.value,
     })
   } catch (err) {
     rows.value = []
@@ -67,7 +72,7 @@ onMounted(() => {
   void loadIssues()
 })
 
-watch([currentProject, env, kindFilter, statusFilter, windowLabel], () => {
+watch([currentProject, env, kindFilter, statusFilter, windowHours], () => {
   void loadIssues()
 })
 
@@ -93,12 +98,10 @@ async function onAction(row: Issue, action: IssueAction) {
     const updated = await patchIssueAction(row.id, action, currentProject.value, env.value)
     const idx = rows.value.findIndex((r) => r.id === row.id)
     if (idx >= 0) {
-      // 当前筛选项下若已不符，从列表移除
       const kindOk = kindFilter.value === 'all' || updated.kind === kindFilter.value
       const statusOk = statusFilter.value === 'all' || updated.workflowStatus === statusFilter.value
       if (kindOk && statusOk) {
         rows.value[idx] = updated
-        // 保持未关闭优先排序
         rows.value = [...rows.value].sort((a, b) => {
           const sr: Record<IssueWorkflowStatus, number> = { open: 0, acked: 1, resolved: 2 }
           const kr: Record<IssueKind, number> = { abnormal: 0, slow: 1 }
@@ -122,9 +125,13 @@ async function onAction(row: Issue, action: IssueAction) {
   }
 }
 
-function goSessions(row: Issue) {
-  const status = issueKindLabel(row.kind)
-  void router.push({ name: 'sessions', query: { route: row.route, status } })
+/** 优先走定稿 deepLink；无则回退页面详情 */
+function goDeepLink(row: Issue) {
+  if (row.deepLink) {
+    void router.push(row.deepLink)
+    return
+  }
+  void router.push(`/pages/${encodeURIComponent(row.route)}`)
 }
 
 function goPage(row: Issue) {
@@ -181,14 +188,16 @@ function formatTime(iso: string) {
         <el-table-column label="类型" width="100">
           <template #default="{ row }">
             <el-tag size="small" :type="kindTagType[row.kind as IssueKind]">
-              {{ issueKindLabel(row.kind) }}
+              {{ row.kindLabel }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="问题" min-width="220">
+        <el-table-column label="问题" min-width="240">
           <template #default="{ row }">
-            <div style="font-weight: 500">{{ row.route }}</div>
-            <div class="afm-muted sub">{{ row.id }} · {{ row.window || windowLabel }}</div>
+            <div style="font-weight: 500">{{ row.title }}</div>
+            <div class="afm-muted sub">
+              {{ row.route }} · {{ formatWindowHours(row.windowHours) }}
+            </div>
           </template>
         </el-table-column>
         <el-table-column label="状态" width="110">
@@ -198,9 +207,9 @@ function formatTime(iso: string) {
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="受影响会话" width="120">
+        <el-table-column label="相关会话" width="110">
           <template #default="{ row }">
-            {{ row.affectedSessions != null ? row.affectedSessions.toLocaleString() : '—' }}
+            {{ row.sessionCount != null ? row.sessionCount.toLocaleString() : '—' }}
           </template>
         </el-table-column>
         <el-table-column label="更新时间" width="170">
@@ -219,7 +228,7 @@ function formatTime(iso: string) {
             >
               {{ item.label }}
             </el-button>
-            <el-button size="small" link @click="goSessions(row)">会话</el-button>
+            <el-button size="small" link @click="goDeepLink(row)">会话</el-button>
             <el-button size="small" link @click="goPage(row)">页面</el-button>
           </template>
         </el-table-column>

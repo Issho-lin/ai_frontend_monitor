@@ -1,10 +1,11 @@
 /**
  * Console 问题 / 待处理 API 层 —— M4 最小集
  *
- * 产品口径（docs/M4-issues-minimal.md）：
+ * 产品口径（docs/M4-issues-minimal.md §列表项契约定稿）：
  * - 主路径：Sessions 路由聚合现算为异常 / 缓慢的行，可跟进工作流
  * - 不吃、不双写告警 `tasks`；Postgres 只落 workflowStatus
- * - kind：abnormal | slow（UI：异常 | 缓慢），与 Sessions 文案对齐
+ * - 列表字段以文档定稿为准：title / kindLabel / windowHours / sessionCount / deepLink
+ *   （不用 window 字符串、不用 affectedSessions）
  *
  * TODO(backend): 下列路径待后端落地后，将 USE_ISSUES_MOCK 改为 false。
  *   GET    /api/v1/issues?projectId=&env=&workflowStatus=&kind=&window=
@@ -12,6 +13,7 @@
  *   PATCH  /api/v1/issues/:id?projectId=&env=
  *     body: { "action": "ack" | "resolve" | "reopen" }
  *       ack → acked；resolve → resolved；reopen → open
+ * 列表响应：`{ "items": Issue[] }` 或直接 Issue[] 均可；下方 normalizeList 兼容两种。
  */
 
 export type IssueKind = 'abnormal' | 'slow'
@@ -20,18 +22,23 @@ export type IssueWorkflowStatus = 'open' | 'acked' | 'resolved'
 
 export type IssueAction = 'ack' | 'resolve' | 'reopen'
 
+/** 定稿列表项（docs/M4-issues-minimal.md） */
 export type Issue = {
   id: string
-  kind: IssueKind
-  workflowStatus: IssueWorkflowStatus
-  route: string
   projectId: string
   env: string
-  /** 时间窗口摘要，如「近 24 小时」 */
-  window: string
+  title: string
+  kind: IssueKind
+  kindLabel: string
+  workflowStatus: IssueWorkflowStatus
+  route: string
+  /** 统计窗口（小时）；不用 window 字符串 */
+  windowHours: number
+  /** 窗口内相关会话数；不用 affectedSessions */
+  sessionCount: number
+  /** Console 内相对路径，跳 Sessions / 页面 */
+  deepLink: string
   updatedAt: string
-  /** 可选：受影响会话数（现算；无则空） */
-  affectedSessions?: number | null
 }
 
 export type ListIssuesParams = {
@@ -39,16 +46,12 @@ export type ListIssuesParams = {
   env: string
   workflowStatus?: IssueWorkflowStatus | 'all'
   kind?: IssueKind | 'all'
-  window?: string
+  /** 传给 GET ?window=；真 API 用；mock 可按 windowHours 对齐 */
+  windowHours?: number
 }
 
 /** 后端未就绪前走本地 mock；接真路由后改为 false */
 export const USE_ISSUES_MOCK = true
-
-const KIND_LABEL: Record<IssueKind, string> = {
-  abnormal: '异常',
-  slow: '缓慢',
-}
 
 const STATUS_LABEL: Record<IssueWorkflowStatus, string> = {
   open: '待处理',
@@ -56,12 +59,29 @@ const STATUS_LABEL: Record<IssueWorkflowStatus, string> = {
   resolved: '已处理',
 }
 
-export function issueKindLabel(kind: IssueKind): string {
-  return KIND_LABEL[kind] ?? kind
-}
-
 export function issueStatusLabel(status: IssueWorkflowStatus): string {
   return STATUS_LABEL[status] ?? status
+}
+
+export function formatWindowHours(hours: number): string {
+  if (hours === 24) return '近 24 小时'
+  if (hours === 168) return '近 7 天'
+  if (hours === 720) return '近 30 天'
+  if (hours % 24 === 0) return `近 ${hours / 24} 天`
+  return `近 ${hours} 小时`
+}
+
+function kindLabelFor(kind: IssueKind): string {
+  return kind === 'abnormal' ? '异常' : '缓慢'
+}
+
+function titleFor(route: string, kind: IssueKind): string {
+  return kind === 'abnormal' ? `${route} 异常会话偏高` : `${route} 缓慢会话偏高`
+}
+
+function deepLinkFor(route: string, kind: IssueKind): string {
+  const qs = new URLSearchParams({ route, kind })
+  return `/sessions?${qs.toString()}`
 }
 
 function nowIso(): string {
@@ -85,52 +105,72 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T
 }
 
-// ── Mock store（进程内；刷新页面会重置；字段对齐 M4）────────────────────────
+function normalizeList(payload: unknown): Issue[] {
+  if (Array.isArray(payload)) return payload as Issue[]
+  if (payload && typeof payload === 'object' && Array.isArray((payload as { items?: unknown }).items)) {
+    return (payload as { items: Issue[] }).items
+  }
+  return []
+}
+
+// ── Mock store（进程内；刷新页面会重置；字段对齐 M4 定稿）────────────────────
 
 const mockIssues: Issue[] = [
   {
-    id: 'iss_demo_checkout_abnormal',
+    id: 'iss-demo-production-/checkout-abnormal',
+    projectId: 'demo',
+    env: 'production',
+    title: titleFor('/checkout', 'abnormal'),
     kind: 'abnormal',
+    kindLabel: kindLabelFor('abnormal'),
     workflowStatus: 'open',
     route: '/checkout',
-    projectId: 'demo',
-    env: 'production',
-    window: '近 24 小时',
-    updatedAt: '2026-10-25T08:12:00+08:00',
-    affectedSessions: 14,
+    windowHours: 24,
+    sessionCount: 14,
+    deepLink: deepLinkFor('/checkout', 'abnormal'),
+    updatedAt: '2026-10-25T00:12:00.000Z',
   },
   {
-    id: 'iss_demo_home_slow',
+    id: 'iss-demo-production-/home-slow',
+    projectId: 'demo',
+    env: 'production',
+    title: titleFor('/home', 'slow'),
     kind: 'slow',
+    kindLabel: kindLabelFor('slow'),
     workflowStatus: 'open',
     route: '/home',
-    projectId: 'demo',
-    env: 'production',
-    window: '近 24 小时',
-    updatedAt: '2026-10-25T07:40:00+08:00',
-    affectedSessions: 31,
+    windowHours: 24,
+    sessionCount: 31,
+    deepLink: deepLinkFor('/home', 'slow'),
+    updatedAt: '2026-10-24T23:40:00.000Z',
   },
   {
-    id: 'iss_demo_search_slow',
+    id: 'iss-demo-production-/search-slow',
+    projectId: 'demo',
+    env: 'production',
+    title: titleFor('/search', 'slow'),
     kind: 'slow',
+    kindLabel: kindLabelFor('slow'),
     workflowStatus: 'acked',
     route: '/search',
-    projectId: 'demo',
-    env: 'production',
-    window: '近 24 小时',
-    updatedAt: '2026-10-24T22:05:00+08:00',
-    affectedSessions: 8,
+    windowHours: 24,
+    sessionCount: 8,
+    deepLink: deepLinkFor('/search', 'slow'),
+    updatedAt: '2026-10-24T14:05:00.000Z',
   },
   {
-    id: 'iss_demo_profile_abnormal',
-    kind: 'abnormal',
-    workflowStatus: 'resolved',
-    route: '/profile',
+    id: 'iss-demo-production-/profile-abnormal',
     projectId: 'demo',
     env: 'production',
-    window: '近 7 天',
-    updatedAt: '2026-10-23T16:30:00+08:00',
-    affectedSessions: 3,
+    title: titleFor('/profile', 'abnormal'),
+    kind: 'abnormal',
+    kindLabel: kindLabelFor('abnormal'),
+    workflowStatus: 'resolved',
+    route: '/profile',
+    windowHours: 168,
+    sessionCount: 3,
+    deepLink: deepLinkFor('/profile', 'abnormal'),
+    updatedAt: '2026-10-23T08:30:00.000Z',
   },
 ]
 
@@ -161,7 +201,7 @@ function sortIssues(rows: Issue[]): Issue[] {
 }
 
 export function listIssues(params: ListIssuesParams): Promise<Issue[]> {
-  const { projectId, env, workflowStatus = 'all', kind = 'all', window } = params
+  const { projectId, env, workflowStatus = 'all', kind = 'all', windowHours } = params
   if (USE_ISSUES_MOCK) {
     return delay().then(() => {
       const filtered = mockIssues.filter((row) => {
@@ -169,7 +209,8 @@ export function listIssues(params: ListIssuesParams): Promise<Issue[]> {
         if (row.env !== env) return false
         if (workflowStatus !== 'all' && row.workflowStatus !== workflowStatus) return false
         if (kind !== 'all' && row.kind !== kind) return false
-        if (window && row.window !== window) return false
+        // mock：有 windowHours 时只展示同窗口行；无则不过滤，避免筛空
+        if (windowHours != null && row.windowHours !== windowHours) return false
         return true
       })
       return sortIssues(filtered.map((r) => ({ ...r })))
@@ -178,8 +219,8 @@ export function listIssues(params: ListIssuesParams): Promise<Issue[]> {
   const qs = new URLSearchParams({ projectId, env })
   if (workflowStatus && workflowStatus !== 'all') qs.set('workflowStatus', workflowStatus)
   if (kind && kind !== 'all') qs.set('kind', kind)
-  if (window) qs.set('window', window)
-  return request<Issue[]>(`/api/v1/issues?${qs.toString()}`).then(sortIssues)
+  if (windowHours != null) qs.set('window', String(windowHours))
+  return request<unknown>(`/api/v1/issues?${qs.toString()}`).then((payload) => sortIssues(normalizeList(payload)))
 }
 
 export function getIssue(id: string, projectId: string, env: string): Promise<Issue> {
