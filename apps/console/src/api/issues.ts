@@ -7,13 +7,14 @@
  * - 列表字段以文档定稿为准：title / kindLabel / windowHours / sessionCount / deepLink
  *   （不用 window 字符串、不用 affectedSessions）
  *
- * TODO(backend): 下列路径待后端落地后，将 USE_ISSUES_MOCK 改为 false。
+ * 后端已就绪（apps/api issues，对齐 docs/M4-issues-minimal.md / commit 7a837f3）：
  *   GET    /api/v1/issues?projectId=&env=&workflowStatus=&kind=&window=
+ *     → 直接 Issue[]（不是 { items }）
  *   GET    /api/v1/issues/:id?projectId=&env=
  *   PATCH  /api/v1/issues/:id?projectId=&env=
  *     body: { "action": "ack" | "resolve" | "reopen" }
  *       ack → acked；resolve → resolved；reopen → open
- * 列表响应：`{ "items": Issue[] }` 或直接 Issue[] 均可；下方 normalizeList 兼容两种。
+ * USE_ISSUES_MOCK=false 走真接口；保留 mock 分支便于本地无后端调试。
  */
 
 export type IssueKind = 'abnormal' | 'slow'
@@ -50,8 +51,8 @@ export type ListIssuesParams = {
   windowHours?: number
 }
 
-/** 后端未就绪前走本地 mock；接真路由后改为 false */
-export const USE_ISSUES_MOCK = true
+/** 接真路由；本地无后端时可改回 true */
+export const USE_ISSUES_MOCK = false
 
 const STATUS_LABEL: Record<IssueWorkflowStatus, string> = {
   open: '待处理',
@@ -105,11 +106,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T
 }
 
+/** 后端定稿：直接数组。非数组则视为空（不认 { items }）。 */
 function normalizeList(payload: unknown): Issue[] {
   if (Array.isArray(payload)) return payload as Issue[]
-  if (payload && typeof payload === 'object' && Array.isArray((payload as { items?: unknown }).items)) {
-    return (payload as { items: Issue[] }).items
-  }
   return []
 }
 
@@ -220,7 +219,7 @@ export function listIssues(params: ListIssuesParams): Promise<Issue[]> {
   if (workflowStatus && workflowStatus !== 'all') qs.set('workflowStatus', workflowStatus)
   if (kind && kind !== 'all') qs.set('kind', kind)
   if (windowHours != null) qs.set('window', String(windowHours))
-  return request<unknown>(`/api/v1/issues?${qs.toString()}`).then((payload) => sortIssues(normalizeList(payload)))
+  return request<Issue[] | unknown>(`/api/v1/issues?${qs.toString()}`).then((payload) => sortIssues(normalizeList(payload)))
 }
 
 export function getIssue(id: string, projectId: string, env: string): Promise<Issue> {
