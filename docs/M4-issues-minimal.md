@@ -50,6 +50,43 @@ PATCH /api/v1/issues/:id?projectId=&env=
 
 无成员系统；`assignee` 本片可省略。
 
+## 列表项契约（定稿，接真按此）
+
+前后端以本对象为准；Console mock 字段名不一致时，**关 mock 前改成下列名字**（不要长期双名映射）。
+
+```json
+{
+  "id": "iss-demo-production-/checkout-abnormal",
+  "projectId": "demo",
+  "env": "production",
+  "title": "/checkout 异常会话偏高",
+  "kind": "abnormal",
+  "kindLabel": "异常",
+  "workflowStatus": "open",
+  "route": "/checkout",
+  "windowHours": 24,
+  "sessionCount": 12,
+  "deepLink": "/sessions?route=%2Fcheckout&kind=abnormal",
+  "updatedAt": "2026-10-25T01:00:00.000Z"
+}
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `id` | string | 稳定 id（建议含 project/env/route/kind 指纹） |
+| `projectId` / `env` | string | 与现有 API 一致 |
+| `title` | string | 列表主文案 |
+| `kind` | `abnormal` \| `slow` | 派生标签枚举 |
+| `kindLabel` | string | 展示用「异常」「缓慢」（与 Sessions 文案一致） |
+| `workflowStatus` | `open` \| `acked` \| `resolved` | Postgres 工作流 |
+| `route` | string | 页面路由 |
+| `windowHours` | number | 统计窗口（小时）；**不用** `window` 字符串 |
+| `sessionCount` | number | 窗口内相关会话数；**不用** `affectedSessions` |
+| `deepLink` | string | Console 内相对路径，跳 Sessions/页面 |
+| `updatedAt` | ISO string | 工作流或聚合更新时间 |
+
+`GET` 列表：`{ "items": [ /* 上形 */ ] }` 或直接数组均可，**后端定一种后在实现旁注释**；前端按最终响应对一下即可。
+
 ## 数据与 API
 
 - 新薄资源：`GET/PATCH /api/v1/issues`（路径按后端最终实现，前后端对齐即可）。
