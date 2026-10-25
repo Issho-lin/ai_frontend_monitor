@@ -85,7 +85,7 @@ PATCH /api/v1/issues/:id?projectId=&env=
 | `deepLink` | string | Console 内相对路径，跳 Sessions/页面 |
 | `updatedAt` | ISO string | 工作流或聚合更新时间 |
 
-`GET` 列表：`{ "items": [ /* 上形 */ ] }` 或直接数组均可，**后端定一种后在实现旁注释**；前端按最终响应对一下即可。
+`GET` 列表：**直接返回数组**（不是 `{ items }`）。已落地：后端 `7a837f3`。
 
 ## 数据与 API
 
