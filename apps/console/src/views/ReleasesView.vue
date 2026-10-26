@@ -1,14 +1,18 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { storeToRefs } from 'pinia'
 import { Search, CaretTop, CaretBottom, Minus } from '@element-plus/icons-vue'
 import { type ReleaseRow } from '@/mock/data'
 import { useReleasesData } from '@/composables/useReleasesData'
+import MetricHead from '@/components/MetricHead.vue'
+import { useFiltersStore } from '@/stores/filters'
 
 const router = useRouter()
+const { env, version } = storeToRefs(useFiltersStore())
 const keyword = ref('')
 const envFilter = ref('all')
-const { rows } = useReleasesData()
+const { rows, loading, error } = useReleasesData()
 
 const filtered = computed(() =>
   rows.value.filter(
@@ -19,12 +23,6 @@ const filtered = computed(() =>
   ),
 )
 
-const statusMap: Record<string, { text: string; type: 'success' | 'warning' | 'danger' | 'info' }> = {
-  released: { text: '已发布', type: 'success' },
-  rolling: { text: '灰度中', type: 'warning' },
-  rolledback: { text: '已回滚', type: 'danger' },
-}
-
 function perfIcon(dir: ReleaseRow['perfDir']) {
   if (dir === 'up') return CaretTop
   if (dir === 'down') return CaretBottom
@@ -32,10 +30,11 @@ function perfIcon(dir: ReleaseRow['perfDir']) {
 }
 
 function open(r: ReleaseRow) {
+  env.value = r.env as typeof env.value
+  version.value = r.version
   router.push({
     name: 'release-detail',
     params: { version: r.version },
-    query: { env: r.env },
   })
 }
 </script>
@@ -57,13 +56,15 @@ function open(r: ReleaseRow) {
       </el-select>
       <div class="afm-muted" style="margin-left: auto">共 {{ filtered.length }} 个版本</div>
     </div>
+    <p v-if="error" class="fallback">版本数据暂不可用。</p>
 
     <div class="afm-card section">
       <div class="afm-section-title">
         版本列表
         <span class="afm-hint">点击行查看发布前后对比</span>
       </div>
-      <el-table :data="filtered" size="default" stripe @row-click="open">
+      <p v-if="loading" class="afm-muted empty">正在读取版本数据…</p>
+      <el-table v-else :data="filtered" size="default" stripe @row-click="open">
         <el-table-column label="版本" min-width="120">
           <template #default="{ row }">
             <span class="version-cell">{{ row.version }}</span>
@@ -76,28 +77,22 @@ function open(r: ReleaseRow) {
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="发布时间" prop="releasedAt" width="160" />
-        <el-table-column label="发布人" prop="releasedBy" width="110" />
+        <el-table-column label="首次上报" prop="releasedAt" width="160" />
+        <el-table-column label="来源" prop="releasedBy" width="110" />
         <el-table-column label="Commit" width="110">
           <template #default="{ row }">
             <code class="commit">{{ row.commit }}</code>
           </template>
         </el-table-column>
-        <el-table-column label="灰度" prop="grayscale" width="90" />
-        <el-table-column label="状态" width="110">
-          <template #default="{ row }">
-            <el-tag size="small" :type="statusMap[row.status].type">
-              {{ statusMap[row.status].text }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="活跃告警" width="100">
+        <el-table-column width="120">
+          <template #header><MetricHead label="活跃告警" tip="active_alerts" /></template>
           <template #default="{ row }">
             <el-badge v-if="row.activeAlerts" :value="row.activeAlerts" type="danger" />
             <span v-else class="afm-muted">0</span>
           </template>
         </el-table-column>
-        <el-table-column label="性能变化" min-width="150">
+        <el-table-column min-width="160">
+          <template #header><MetricHead label="性能变化" tip="perf_shift" /></template>
           <template #default="{ row }">
             <span
               class="perf"
@@ -122,6 +117,8 @@ function open(r: ReleaseRow) {
 .section {
   margin-top: 16px;
 }
+.fallback { margin: 12px 0 0; color: var(--afm-warn); font-size: 13px; }
+.empty { margin: 8px 0; }
 .version-cell {
   font-weight: 600;
   color: var(--afm-accent);

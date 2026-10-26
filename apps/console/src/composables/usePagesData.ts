@@ -1,8 +1,9 @@
 import { onMounted, ref } from 'vue'
-import { pageRows as mockPageRows, trendSeries as mockTrendSeries, type PageRow } from '@/mock/data'
+import { type PageRow } from '@/mock/data'
+import { monitorSearch } from '@/composables/monitorSearch'
 
 export function usePagesData() {
-  const rows = ref<PageRow[]>(mockPageRows)
+  const rows = ref<PageRow[]>([])
   const loading = ref(false)
   const error = ref<string | null>(null)
 
@@ -11,7 +12,7 @@ export function usePagesData() {
     error.value = null
 
     try {
-      const response = await fetch('/api/v1/pages?projectId=demo&env=production')
+      const response = await fetch(`/api/v1/pages?${monitorSearch().toString()}`)
       if (!response.ok) {
         throw new Error(`Pages request failed: ${response.status}`)
       }
@@ -19,7 +20,7 @@ export function usePagesData() {
       rows.value = (await response.json()) as PageRow[]
     } catch (err) {
       error.value = err instanceof Error ? err.message : 'Unknown error'
-      rows.value = mockPageRows
+      rows.value = []
     } finally {
       loading.value = false
     }
@@ -33,7 +34,6 @@ export function usePagesData() {
     rows,
     loading,
     error,
-    trendSeries: mockTrendSeries,
     fetchPages,
   }
 }

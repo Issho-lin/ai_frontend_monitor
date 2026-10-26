@@ -33,6 +33,7 @@ const props = defineProps<{
 
 const el = ref<HTMLDivElement | null>(null)
 let chart: echarts.ECharts | null = null
+let observer: ResizeObserver | null = null
 
 function resize() {
   chart?.resize()
@@ -42,6 +43,8 @@ onMounted(() => {
   if (!el.value) return
   chart = echarts.init(el.value)
   chart.setOption(props.option)
+  observer = new ResizeObserver(() => chart?.resize())
+  observer.observe(el.value)
   window.addEventListener('resize', resize)
 })
 
@@ -53,8 +56,17 @@ watch(
   { deep: true },
 )
 
+watch(
+  () => props.height,
+  () => {
+    requestAnimationFrame(() => chart?.resize())
+  },
+)
+
 onBeforeUnmount(() => {
   window.removeEventListener('resize', resize)
+  observer?.disconnect()
+  observer = null
   chart?.dispose()
   chart = null
 })

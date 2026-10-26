@@ -4,24 +4,25 @@ import { ref } from 'vue'
 export type ProjectOption = { id: string; name: string }
 export type EnvOption = 'production' | 'staging' | 'development'
 export type DeviceOption = 'all' | 'desktop' | 'mobile' | 'tablet'
-export type TimeRange = '15m' | '1h' | '6h' | '24h' | '7d' | '30d'
+export type TimeRange = '24h' | '7d' | '30d'
 
 export const useFiltersStore = defineStore('filters', () => {
-  const projects: ProjectOption[] = [
-    { id: 'proj-mall', name: '电商主站' },
-    { id: 'proj-admin', name: '运营后台' },
-    { id: 'proj-mobile', name: 'H5 活动页' },
-  ]
+  /** 顶栏应用切换；项目管理页加载/变更后会同步写入 */
+  const projects = ref<ProjectOption[]>([
+    { id: 'demo', name: 'demo' },
+  ])
 
-  const currentProject = ref<string>('proj-mall')
+  const currentProject = ref<string>('demo')
   const env = ref<EnvOption>('production')
   const timeRange = ref<TimeRange>('24h')
   const version = ref<string>('all')
   const device = ref<DeviceOption>('all')
-  const region = ref<string>('all')
+  const country = ref('all')
+  const browser = ref('all')
 
-  const versions = ref<string[]>(['all', 'v1.18.1', 'v1.18.0', 'v1.17.4'])
-  const regions = ref<string[]>(['all', '华东', '华北', '华南', '西南', '海外'])
+  const versions = ref<string[]>(['all'])
+  const countries = ref<string[]>([])
+  const browsers = ref<string[]>([])
 
   return {
     projects,
@@ -30,8 +31,10 @@ export const useFiltersStore = defineStore('filters', () => {
     timeRange,
     version,
     device,
-    region,
+    country,
+    browser,
     versions,
-    regions,
+    countries,
+    browsers,
   }
 })

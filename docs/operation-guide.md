@@ -639,14 +639,13 @@ AI 自动总结当前最值得关注的问题，包括：
 pnpm add @ai-frontend-monitor/sdk
 
 // 初始化
-import { init } from '@ai-frontend-monitor/sdk'
+import { afmInit } from '@ai-frontend-monitor/sdk'
 
-init({
-  projectToken: 'PROJECT_TOKEN',
+afmInit({
+  projectId: 'PROJECT_ID',
   env: 'production',
-  release: 'v1.18.0',
-  sampleRate: 1.0,
-  reportUrl: 'https://ingest.example.com/report'
+  token: 'PROJECT_TOKEN',
+  endpoint: 'http://127.0.0.1:3001/ingest',
 })
 ```
 

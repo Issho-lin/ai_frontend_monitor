@@ -7,12 +7,14 @@ export interface PageRow {
   route: string
   pv: number
   affectedUsers: number
-  lcpP75: number
-  inpP75: number
-  clsP75: number
-  jsErrorRate: number
-  apiP95: number
-  passRate: number
+  lcpP75: number | null
+  fcpP75: number | null
+  inpP75: number | null
+  clsP75: number | null
+  ttfbP75: number | null
+  jsErrorRate: number | null
+  apiP95: number | null
+  passRate: number | null
   trend: 'up' | 'down' | 'flat'
 }
 
@@ -79,6 +81,9 @@ export interface ApiRow {
   errorRate: number
   timeoutRate: number
   qps: number
+  failedQps?: number
+  timeoutQps?: number
+  requests?: number
   traceCoverage: number
 }
 
@@ -102,6 +107,7 @@ export interface ErrorGroup {
   firstSeen: string
   lastSeen: string
   status: 'unresolved' | 'watching' | 'resolved'
+  trend?: number[]
 }
 
 export const projectOverview = {
@@ -148,8 +154,10 @@ export const pageRows: PageRow[] = [
     pv: 128432,
     affectedUsers: 12400,
     lcpP75: 4.1,
+    fcpP75: 2.4,
     inpP75: 320,
     clsP75: 0.09,
+    ttfbP75: 920,
     jsErrorRate: 1.6,
     apiP95: 1300,
     passRate: 62,
@@ -160,8 +168,10 @@ export const pageRows: PageRow[] = [
     pv: 86021,
     affectedUsers: 4200,
     lcpP75: 3.2,
+    fcpP75: 1.9,
     inpP75: 390,
     clsP75: 0.06,
+    ttfbP75: 640,
     jsErrorRate: 0.7,
     apiP95: 780,
     passRate: 74,
@@ -172,8 +182,10 @@ export const pageRows: PageRow[] = [
     pv: 21089,
     affectedUsers: 1830,
     lcpP75: 2.7,
+    fcpP75: 1.6,
     inpP75: 210,
     clsP75: 0.04,
+    ttfbP75: 480,
     jsErrorRate: 2.3,
     apiP95: 620,
     passRate: 81,
@@ -184,8 +196,10 @@ export const pageRows: PageRow[] = [
     pv: 32112,
     affectedUsers: 950,
     lcpP75: 2.3,
+    fcpP75: 1.4,
     inpP75: 180,
     clsP75: 0.03,
+    ttfbP75: 360,
     jsErrorRate: 0.4,
     apiP95: 540,
     passRate: 92,
@@ -196,8 +210,10 @@ export const pageRows: PageRow[] = [
     pv: 15442,
     affectedUsers: 640,
     lcpP75: 2.9,
+    fcpP75: 1.8,
     inpP75: 260,
     clsP75: 0.05,
+    ttfbP75: 710,
     jsErrorRate: 0.8,
     apiP95: 720,
     passRate: 85,
@@ -981,9 +997,9 @@ export const releaseRows: ReleaseRow[] = [
 export interface MetricDiff {
   metric: string
   unit: string
-  before: number
-  after: number
-  changePct: number
+  before: number | null
+  after: number | null
+  changePct: number | null
   bad: boolean
 }
 
@@ -991,10 +1007,10 @@ export interface ReleaseDiff {
   version: string
   compareTo: string
   metrics: MetricDiff[]
-  pages: { route: string; metric: string; before: number; after: number; unit: string; changePct: number }[]
+  pages: { route: string; metric: string; before: number | null; after: number | null; unit: string; changePct: number | null }[]
   resources: { url: string; kind: 'added' | 'removed' | 'changed'; sizeBefore: number; sizeAfter: number; chunk: string }[]
   errors: { id: string; message: string; kind: 'new' | 'gone' | 'changed'; countBefore: number; countAfter: number }[]
-  apis: { api: string; kind: 'new' | 'changed'; p95Before: number; p95After: number }[]
+  apis: { api: string; kind: 'new' | 'changed'; p95Before: number | null; p95After: number | null }[]
   alerts: string[]
 }
 
@@ -1033,16 +1049,289 @@ export function getReleaseDiff(version: string): ReleaseDiff | null {
   return releaseDiffs[version] ?? null
 }
 
+export interface TimelineStep {
+  at: string
+  title: string
+  detail: string
+  bad?: boolean
+}
+
+export interface SessionRow {
+  id: string
+  user: string
+  device: string
+  region: string
+  route: string
+  score: number
+  status: '异常' | '缓慢' | '正常'
+  duration: string
+  eventCount: number
+  time: string
+  related: { kind: 'error' | 'alert'; id: string } | null
+  timeline: TimelineStep[]
+}
+
+const checkoutTimeline: TimelineStep[] = [
+  { at: '10:18:02', title: '进入结算页', detail: '/checkout · LCP 2.6s' },
+  { at: '10:18:11', title: '修改商品数量', detail: 'SKU-19482 · 2 → 3' },
+  { at: '10:18:14', title: '点击提交订单', detail: '主线程处理 186ms' },
+  { at: '10:18:14', title: 'JavaScript 异常', detail: "reading 'items' · 未发出订单请求", bad: true },
+]
+
+const homeTimeline: TimelineStep[] = [
+  { at: '10:21:06', title: '打开首页', detail: 'iPhone · 4G · TTFB 640ms' },
+  { at: '10:21:08', title: '加载首屏图片', detail: '/static/banner.png · 1.9MB · 1620ms' },
+  { at: '10:21:09', title: '请求推荐接口', detail: 'GET /api/recommend · 1.3s' },
+  { at: '10:21:11', title: '最大内容绘制', detail: 'LCP 4.1s · 发布前基线 2.4s', bad: true },
+]
+
+export const sessionRows: SessionRow[] = [
+  {
+    id: 'SES-A89D2',
+    user: 'U-238194',
+    device: 'iPhone 15 · Safari 18',
+    region: '上海',
+    route: '/checkout',
+    score: 36,
+    status: '异常',
+    duration: '04:32',
+    eventCount: 28,
+    time: '10:18:02',
+    related: { kind: 'error', id: 'err-501' },
+    timeline: checkoutTimeline,
+  },
+  {
+    id: 'SES-70CE1',
+    user: 'U-552019',
+    device: 'Android · Chrome 129',
+    region: '广州',
+    route: '/home',
+    score: 54,
+    status: '缓慢',
+    duration: '02:48',
+    eventCount: 19,
+    time: '10:21:06',
+    related: { kind: 'alert', id: 'alrt-1001' },
+    timeline: homeTimeline,
+  },
+  {
+    id: 'SES-21DE8',
+    user: 'U-908224',
+    device: 'iPhone 13 · Safari 17',
+    region: '深圳',
+    route: '/checkout',
+    score: 41,
+    status: '异常',
+    duration: '03:51',
+    eventCount: 24,
+    time: '10:32:46',
+    related: { kind: 'error', id: 'err-501' },
+    timeline: checkoutTimeline,
+  },
+  {
+    id: 'SES-91BC4',
+    user: 'U-771028',
+    device: 'Windows · Chrome 130',
+    region: '北京',
+    route: '/product/:id',
+    score: 92,
+    status: '正常',
+    duration: '08:17',
+    eventCount: 43,
+    time: '10:40:53',
+    related: null,
+    timeline: [
+      { at: '10:40:53', title: '打开商品详情', detail: 'LCP 2.1s · INP 180ms' },
+      { at: '10:41:20', title: '查看规格', detail: '主线程 42ms' },
+      { at: '10:44:02', title: '加入购物车', detail: 'POST /api/cart · 210ms' },
+    ],
+  },
+  {
+    id: 'SES-38FA7',
+    user: 'U-104821',
+    device: 'macOS · Chrome 130',
+    region: '杭州',
+    route: '/home',
+    score: 88,
+    status: '正常',
+    duration: '06:04',
+    eventCount: 31,
+    time: '10:36:10',
+    related: null,
+    timeline: [
+      { at: '10:36:10', title: '打开首页', detail: '宽带 · LCP 1.8s' },
+      { at: '10:36:40', title: '搜索商品', detail: 'GET /api/product/detail · 260ms' },
+    ],
+  },
+]
+
+const errorStacks: Record<string, string[]> = {
+  'err-501': [
+    "TypeError: Cannot read properties of undefined (reading 'items')",
+    '    at buildOrderPayload (src/checkout/order.ts:116:9)',
+    '    at handleSubmit (src/pages/checkout/index.tsx:204:17)',
+  ],
+  'err-489': [
+    'ChunkLoadError: Loading chunk 42 failed.',
+    '    at importChunk (src/router/lazy.ts:28:11)',
+    '    at loadRoute (src/pages/product/index.tsx:14:3)',
+  ],
+  'err-410': [
+    'UnhandledPromiseRejection: Network Error',
+    '    at request (src/api/client.ts:72:15)',
+    '    at loadHome (src/pages/home/index.tsx:41:5)',
+  ],
+  'err-380': [
+    'ResourceLoadError: banner.png 404',
+    '    at HTMLImageElement.onerror (/static/banner.png)',
+  ],
+}
+
+export interface TriageModel {
+  kind: 'error' | 'alert' | 'release' | 'session'
+  id: string
+  title: string
+  route: string
+  release: string
+  introducedByRelease: boolean
+  affectedUsers: number
+  summary: string
+  stack: string[] | null
+  timeline: TimelineStep[]
+  sessionId: string | null
+  metrics: MetricDiff[]
+  resources: ResourceRow[]
+  alertId?: string
+  taskId?: string
+}
+
+export function getTriage(kind: string, id: string): TriageModel | null {
+  const diff = getReleaseDiff('v1.18.0')
+  const metrics = diff?.metrics.filter((item) => item.bad) ?? []
+
+  if (kind === 'error') {
+    const error = errorGroups.find((item) => item.id === id)
+    if (!error) return null
+    const session = sessionRows.find((item) => item.related?.kind === 'error' && item.related.id === id)
+    const introduced = diff?.errors.some((item) => item.id === id && item.kind === 'new') ?? false
+    const alert = alertRows.find((item) => item.route === error.route && item.release === error.release)
+    return {
+      kind: 'error',
+      id,
+      title: error.message,
+      route: error.route,
+      release: error.release,
+      introducedByRelease: introduced,
+      affectedUsers: error.affectedUsers,
+      summary: introduced
+        ? `${error.release} 首次出现，发布前次数为 0。受影响 ${error.affectedUsers.toLocaleString()} 人。`
+        : `${error.release} 上仍在发生。最近一次 ${error.lastSeen}。`,
+      stack: errorStacks[id] ?? null,
+      timeline: session?.timeline ?? [],
+      sessionId: session?.id ?? null,
+      metrics: metrics.filter((item) => item.metric.includes('Error') || error.route === '/checkout'),
+      resources: error.type === 'resource' ? resourceRows : resourceRows.slice(0, 3),
+      alertId: alert?.id,
+      taskId: alert?.linkedTaskId,
+    }
+  }
+
+  if (kind === 'alert') {
+    const alert = alertRows.find((item) => item.id === id)
+    if (!alert) return null
+    const report = agentReports[id]
+    const session = sessionRows.find((item) => item.related?.kind === 'alert' && item.related.id === id)
+      ?? sessionRows.find((item) => item.route === alert.route)
+    const error = alert.metric.includes('Error')
+      ? errorGroups.find((item) => item.route === alert.route && item.type !== 'resource')
+      : undefined
+    return {
+      kind: 'alert',
+      id,
+      title: alert.title,
+      route: alert.route,
+      release: alert.release,
+      introducedByRelease: alert.release === 'v1.18.0',
+      affectedUsers: alert.affectedUsers,
+      summary: report?.conclusion ?? `${alert.metric} 当前 ${alert.triggerValue}，基线 ${alert.baseline}。`,
+      stack: error ? errorStacks[error.id] ?? null : null,
+      timeline: session?.timeline ?? [],
+      sessionId: session?.id ?? null,
+      metrics,
+      resources: resourceRows,
+      alertId: alert.id,
+      taskId: alert.linkedTaskId,
+    }
+  }
+
+  if (kind === 'release') {
+    const release = releaseRows.find((item) => item.version === id)
+    const releaseDiff = getReleaseDiff(id)
+    if (!release || !releaseDiff) return null
+    return {
+      kind: 'release',
+      id,
+      title: `${release.version} 发布后指标变差`,
+      route: releaseDiff.pages[0]?.route ?? '/home',
+      release: release.version,
+      introducedByRelease: true,
+      affectedUsers: projectOverview.affectedUsers,
+      summary: `对比 ${releaseDiff.compareTo}，${releaseDiff.metrics.filter((item) => item.bad).length} 项指标变差。发布于 ${release.releasedAt}。`,
+      stack: null,
+      timeline: releaseTimeline.map((item) => ({
+        at: item.time.slice(11),
+        title: item.label,
+        detail: item.kind,
+        bad: item.kind === 'anomaly' || item.kind === 'alert',
+      })),
+      sessionId: sessionRows[1]?.id ?? null,
+      metrics: releaseDiff.metrics,
+      resources: resourceRows,
+      alertId: releaseDiff.alerts[0],
+      taskId: 'task-2001',
+    }
+  }
+
+  if (kind === 'session') {
+    const session = sessionRows.find((item) => item.id === id)
+    if (!session) return null
+    const error = session.related?.kind === 'error'
+      ? errorGroups.find((item) => item.id === session.related?.id)
+      : undefined
+    const alert = session.related?.kind === 'alert'
+      ? alertRows.find((item) => item.id === session.related?.id)
+      : alertRows.find((item) => item.route === session.route)
+    return {
+      kind: 'session',
+      id,
+      title: `${session.user} · ${session.route}`,
+      route: session.route,
+      release: 'v1.18.0',
+      introducedByRelease: session.status !== '正常',
+      affectedUsers: 1,
+      summary: `${session.device} · ${session.region} · 体验分 ${session.score} · 停留 ${session.duration}`,
+      stack: error ? errorStacks[error.id] ?? null : null,
+      timeline: session.timeline,
+      sessionId: session.id,
+      metrics: session.status === '正常' ? [] : metrics.slice(0, 3),
+      resources: resourceRows.slice(0, 3),
+      alertId: alert?.id,
+      taskId: alert?.linkedTaskId,
+    }
+  }
+
+  return null
+}
+
 export const sdkSnippet = `// npm 安装
 pnpm add @ai-frontend-monitor/sdk
 
 // 初始化
-import { init } from '@ai-frontend-monitor/sdk'
+import { afmInit } from '@ai-frontend-monitor/sdk'
 
-init({
-  projectToken: 'PROJECT_TOKEN',
+afmInit({
+  projectId: 'PROJECT_ID',
   env: 'production',
-  release: 'v1.18.0',
-  sampleRate: 1.0,
-  reportUrl: 'https://ingest.example.com/report'
+  token: 'PROJECT_TOKEN',
+  endpoint: 'http://127.0.0.1:3001/ingest',
 })`

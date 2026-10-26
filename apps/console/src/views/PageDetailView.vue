@@ -1,104 +1,25 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { storeToRefs } from 'pinia'
+import { useFiltersStore } from '@/stores/filters'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft, DocumentCopy } from '@element-plus/icons-vue'
 import MetricCard from '@/components/MetricCard.vue'
-import EChart from '@/components/EChart.vue'
-import DiagnosisPanel from '@/components/DiagnosisPanel.vue'
-import { getReportForRoute } from '@/mock/data'
+import MetricTip from '@/components/MetricTip.vue'
+import MetricHead from '@/components/MetricHead.vue'
 import { usePageDetailData } from '@/composables/usePageDetailData'
+import { useWindowLabel } from '@/composables/useWindowLabel'
 
 const route = useRoute()
 const router = useRouter()
+const { device } = storeToRefs(useFiltersStore())
+const windowLabel = useWindowLabel()
+const lcpGoodSeconds = computed(() => (device.value === 'mobile' ? 3 : 2.5))
 
-const routeParam = computed(() => decodeURIComponent(String(route.params.route || '/home')))
-const { page: pageInfo, resources: resourceRows, apis: apiPreview, trendSeries } =
+const routeParam = computed(() => decodeURIComponent(String(route.params.route || '')))
+const { page: pageInfo, resources: resourceRows, apis: apiPreview, error, loading } =
   usePageDetailData(routeParam)
-
-const report = computed(() => getReportForRoute(routeParam.value))
-const reportTitle = computed(() => "页面诊断")
-
-const webVitalsOption = computed(() => ({
-  tooltip: { trigger: 'axis' },
-  legend: { data: ['LCP (s)', 'INP (ms)', 'API P95 (ms)'] },
-  grid: { left: 40, right: 40, top: 40, bottom: 30 },
-  xAxis: { type: 'category', data: trendSeries.lcp.map((p) => p[0]) },
-  yAxis: [
-    { type: 'value', name: 's', axisLabel: { color: '#6b7280' } },
-    { type: 'value', name: 'ms', axisLabel: { color: '#6b7280' } },
-  ],
-  series: [
-    {
-      name: 'LCP (s)',
-      type: 'line',
-      smooth: true,
-      data: trendSeries.lcp.map((p) => p[1]),
-      lineStyle: { color: '#0077ee' },
-      itemStyle: { color: '#0077ee' },
-      markLine: {
-        symbol: 'none',
-        lineStyle: { color: '#ef4444', type: 'dashed' },
-        data: [{ yAxis: 2.5, label: { formatter: 'Good ≤ 2.5s', position: 'end' } }],
-      },
-    },
-    {
-      name: 'INP (ms)',
-      type: 'line',
-      smooth: true,
-      yAxisIndex: 1,
-      data: trendSeries.inp.map((p) => p[1]),
-      lineStyle: { color: '#f59e0b' },
-      itemStyle: { color: '#f59e0b' },
-    },
-    {
-      name: 'API P95 (ms)',
-      type: 'line',
-      smooth: true,
-      yAxisIndex: 1,
-      data: trendSeries.api_p95.map((p) => p[1]),
-      lineStyle: { color: '#10b981' },
-      itemStyle: { color: '#10b981' },
-    },
-  ],
-}))
-
-const deviceDist = computed(() => ({
-  tooltip: { trigger: 'item' },
-  legend: { bottom: 0 },
-  series: [
-    {
-      name: '设备分布',
-      type: 'pie',
-      radius: ['45%', '70%'],
-      label: { formatter: '{b}\n{d}%' },
-      data: [
-        { value: 62, name: '移动端' },
-        { value: 30, name: '桌面端' },
-        { value: 8, name: '平板' },
-      ],
-    },
-  ],
-}))
-
-const regionDist = computed(() => ({
-  tooltip: { trigger: 'axis' },
-  grid: { left: 60, right: 20, top: 20, bottom: 30 },
-  xAxis: { type: 'value', axisLabel: { color: '#6b7280' } },
-  yAxis: {
-    type: 'category',
-    data: ['华东', '华北', '华南', '西南', '海外'],
-    axisLabel: { color: '#6b7280' },
-  },
-  series: [
-    {
-      type: 'bar',
-      data: [42, 28, 18, 8, 4],
-      itemStyle: { color: '#0077ee' },
-      label: { show: true, position: 'right', formatter: '{c}%' },
-    },
-  ],
-}))
 
 const resources = computed(() =>
   resourceRows.value.map((r) => ({
@@ -111,6 +32,18 @@ function copyRoute() {
   navigator.clipboard.writeText(routeParam.value)
   ElMessage.success('已复制页面路由')
 }
+
+function metricText(value: number | null, unit: string) {
+  return value == null ? '—' : `${value}${unit}`
+}
+
+function within(value: number | null, goodAt: number) {
+  return value == null ? undefined : value <= goodAt
+}
+
+function openApi(api: string) {
+  void router.push({ name: 'api-detail', query: { api } })
+}
 </script>
 
 <template>
@@ -121,56 +54,53 @@ function copyRoute() {
         <span class="route">{{ routeParam }}</span>
         <el-button link :icon="DocumentCopy" @click="copyRoute">复制</el-button>
       </div>
-      <div class="afm-muted">PV {{ pageInfo.pv.toLocaleString() }} · 受影响用户 {{ pageInfo.affectedUsers.toLocaleString() }}</div>
+      <div v-if="pageInfo" class="afm-muted meta-line">
+        <span>PV {{ pageInfo.pv.toLocaleString() }}<MetricTip tip="pv" /></span>
+        <span>受影响用户 {{ pageInfo.affectedUsers.toLocaleString() }}<MetricTip tip="affected_users" /></span>
+      </div>
     </div>
 
+    <p v-if="error" class="fallback">接口暂不可用。</p>
+    <div v-if="loading" class="afm-card section">
+      <p class="afm-muted empty">正在读取页面数据…</p>
+    </div>
+    <div v-else-if="!pageInfo" class="afm-card section">
+      <p class="afm-muted empty">没有这个页面的访问数据。</p>
+    </div>
+
+    <template v-else>
     <div class="afm-metric-grid section">
-      <MetricCard label="LCP P75" :value="`${pageInfo.lcpP75}s`" delta="+70.8%" delta-dir="up" />
-      <MetricCard label="INP P75" :value="`${pageInfo.inpP75}ms`" delta="+40%" delta-dir="up" />
-      <MetricCard label="CLS P75" :value="`${pageInfo.clsP75}`" delta="+0.02" delta-dir="up" />
-      <MetricCard label="JS Error Rate" :value="`${pageInfo.jsErrorRate}%`" delta="+0.6pp" delta-dir="up" />
-      <MetricCard label="API P95" :value="`${pageInfo.apiP95}ms`" delta="+200ms" delta-dir="up" />
-      <MetricCard label="达标率" :value="`${pageInfo.passRate}%`" delta="-15pp" delta-dir="up" />
+      <MetricCard label="LCP P75" tip="lcp_p75" :value="metricText(pageInfo.lcpP75, 's')" :good="within(pageInfo.lcpP75, lcpGoodSeconds)" :hint="pageInfo.lcpP75 == null ? `${windowLabel}没有样本` : (device === 'mobile' ? '手机良好线 3.0s' : '良好线 2.5s')" />
+      <MetricCard label="FCP P75" tip="fcp_p75" :value="metricText(pageInfo.fcpP75, 's')" :good="within(pageInfo.fcpP75, 1.8)" :hint="pageInfo.fcpP75 == null ? `${windowLabel}没有样本` : '良好线 1.8s'" />
+      <MetricCard label="INP P75" tip="inp_p75" :value="metricText(pageInfo.inpP75, 'ms')" :good="within(pageInfo.inpP75, 200)" :hint="pageInfo.inpP75 == null ? `${windowLabel}没有样本` : '良好线 200ms'" />
+      <MetricCard label="CLS P75" tip="cls_p75" :value="metricText(pageInfo.clsP75, '')" :good="within(pageInfo.clsP75, 0.1)" :hint="pageInfo.clsP75 == null ? `${windowLabel}没有样本` : '良好线 0.1'" />
+      <MetricCard label="TTFB P75" tip="ttfb_p75" :value="metricText(pageInfo.ttfbP75, 'ms')" :good="within(pageInfo.ttfbP75, 800)" :hint="pageInfo.ttfbP75 == null ? `${windowLabel}没有样本` : '良好线 800ms'" />
+      <MetricCard label="JS Error Rate" tip="js_error_rate" :value="metricText(pageInfo.jsErrorRate, '%')" :good="within(pageInfo.jsErrorRate, 0.5)" :hint="pageInfo.jsErrorRate == null ? `${windowLabel}没有页面访问` : '良好线 ≤ 0.5%'" />
+      <MetricCard label="API P95" tip="api_p95" :value="metricText(pageInfo.apiP95, 'ms')" :good="within(pageInfo.apiP95, 800)" :hint="pageInfo.apiP95 == null ? `${windowLabel}没有接口样本` : '良好线 800ms'" />
+      <MetricCard label="达标率" tip="pass_rate" :value="metricText(pageInfo.passRate, '%')" :good="pageInfo.passRate == null ? undefined : pageInfo.passRate >= 75" hint="只统计有样本的检查" />
     </div>
 
-    <div class="split section">
-      <div class="split-main">
+    <div class="section">
         <div class="afm-card">
-          <div class="afm-section-title">
-            Web Vitals 与关联接口趋势
-            <span class="afm-hint">观察窗口 24 小时</span>
-          </div>
-          <EChart :option="webVitalsOption" height="320px" />
-        </div>
-
-        <div class="grid-2 section">
-          <div class="afm-card">
-            <div class="afm-section-title">设备分布</div>
-            <EChart :option="deviceDist" height="240px" />
-          </div>
-          <div class="afm-card">
-            <div class="afm-section-title">地区分布</div>
-            <EChart :option="regionDist" height="240px" />
-          </div>
-        </div>
-
-        <div class="afm-card section">
           <div class="afm-section-title">
             首屏资源瀑布
             <span class="afm-hint">按加载耗时排序</span>
           </div>
-          <el-table :data="resources" size="default">
+          <el-table v-if="resources.length" :data="resources" size="default">
             <el-table-column label="资源" prop="url" min-width="260" />
             <el-table-column label="类型" prop="type" width="80" />
-            <el-table-column label="体积 (KB)" prop="sizeKb" width="120" />
-            <el-table-column label="加载耗时 (ms)" prop="duration" width="140" />
-            <el-table-column label="缓存命中" width="120">
-              <template #default="{ row }">{{ row.cacheHitRate }}%</template>
+            <el-table-column prop="sizeKb" width="130">
+              <template #header><MetricHead label="体积 (KB)" tip="resource_size" /></template>
             </el-table-column>
-            <el-table-column label="失败率" width="100">
+            <el-table-column prop="duration" width="150">
+              <template #header><MetricHead label="加载耗时 (ms)" tip="resource_duration" /></template>
+            </el-table-column>
+            <el-table-column width="110">
+              <template #header><MetricHead label="失败率" tip="resource_fail" /></template>
               <template #default="{ row }">{{ row.failRate }}%</template>
             </el-table-column>
           </el-table>
+          <p v-else class="afm-muted empty">所选条件下暂无资源瀑布数据。</p>
         </div>
 
         <div class="afm-card section">
@@ -178,25 +108,29 @@ function copyRoute() {
             关联接口
             <span class="afm-hint">页面维度前 4</span>
           </div>
-          <el-table :data="apiPreview" size="default">
-            <el-table-column label="接口" prop="api" min-width="200" />
+          <el-table :data="apiPreview" size="default" @row-click="(row: { api: string }) => openApi(row.api)">
+            <el-table-column label="接口" min-width="200">
+              <template #default="{ row }"><span class="api-link">{{ row.api }}</span></template>
+            </el-table-column>
             <el-table-column label="Method" prop="method" width="90" />
-            <el-table-column label="P50 (ms)" prop="p50" width="110" />
-            <el-table-column label="P95 (ms)" prop="p95" width="110" />
-            <el-table-column label="错误率" width="110">
+            <el-table-column prop="p50" width="120">
+              <template #header><MetricHead label="P50 (ms)" tip="api_p50" /></template>
+            </el-table-column>
+            <el-table-column prop="p95" width="120">
+              <template #header><MetricHead label="P95 (ms)" tip="api_p95" /></template>
+            </el-table-column>
+            <el-table-column width="110">
+              <template #header><MetricHead label="错误率" tip="error_rate" /></template>
               <template #default="{ row }">{{ row.errorRate }}%</template>
             </el-table-column>
-            <el-table-column label="超时率" width="110">
+            <el-table-column width="110">
+              <template #header><MetricHead label="超时率" tip="timeout_rate" /></template>
               <template #default="{ row }">{{ row.timeoutRate }}%</template>
             </el-table-column>
           </el-table>
         </div>
-      </div>
-
-      <div class="split-side">
-        <DiagnosisPanel :report="report" :title="reportTitle" />
-      </div>
     </div>
+    </template>
   </div>
 </template>
 
@@ -220,27 +154,16 @@ function copyRoute() {
 .section {
   margin-top: 20px;
 }
-.split {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 380px;
+.meta-line {
+  display: flex;
+  align-items: center;
   gap: 16px;
 }
-@media (max-width: 1280px) {
-  .split {
-    grid-template-columns: 1fr;
-  }
+.fallback { margin: 12px 0 0; color: var(--afm-warn); font-size: 13px; }
+.empty { margin: 8px 0 0; }
+.api-link {
+  color: var(--afm-accent);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
-.split-main {
-  min-width: 0;
-}
-.grid-2 {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
-}
-@media (max-width: 800px) {
-  .grid-2 {
-    grid-template-columns: 1fr;
-  }
-}
+:deep(.el-table__row) { cursor: pointer; }
 </style>

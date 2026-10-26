@@ -1,61 +1,82 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { Search, TrendCharts, CaretTop, CaretBottom, Right } from '@element-plus/icons-vue'
+import { Search, TrendCharts, Right } from '@element-plus/icons-vue'
 import EChart from '@/components/EChart.vue'
+import MetricTip from '@/components/MetricTip.vue'
+import MetricHead from '@/components/MetricHead.vue'
 import { usePagesData } from '@/composables/usePagesData'
 
 const router = useRouter()
 const keyword = ref('')
-const { rows, trendSeries } = usePagesData()
+const { rows, loading, error } = usePagesData()
 
 const filtered = computed(() =>
   rows.value.filter((r) => r.route.toLowerCase().includes(keyword.value.trim().toLowerCase())),
 )
 
+const CHART_LIMIT = 8
+
+const chartRows = computed(() =>
+  filtered.value
+    .filter((row): row is typeof row & { lcpP75: number } => row.lcpP75 != null)
+    .sort((a, b) => b.lcpP75 - a.lcpP75)
+    .slice(0, CHART_LIMIT),
+)
+
+const chartHeight = computed(() => `${Math.max(180, chartRows.value.length * 40 + 64)}px`)
+
 const distributionOption = computed(() => ({
-  tooltip: { trigger: 'axis' },
-  grid: { left: 60, right: 20, top: 30, bottom: 30 },
-  xAxis: { type: 'category', data: filtered.value.map((p) => p.route) },
-  yAxis: [
-    { type: 'value', name: 'LCP (s)', axisLabel: { color: '#6b7280' } },
-    { type: 'value', name: 'PV', axisLabel: { color: '#6b7280' } },
-  ],
+  tooltip: {
+    trigger: 'axis',
+    axisPointer: { type: 'shadow' },
+    formatter(params: Array<{ dataIndex: number }>) {
+      const row = chartRows.value[params[0]?.dataIndex ?? 0]
+      if (!row) return ''
+      return `${row.route}<br/>LCP P75 ${row.lcpP75}s<br/>PV ${row.pv.toLocaleString()}`
+    },
+  },
+  grid: { left: 8, right: 56, top: 12, bottom: 24, containLabel: true },
+  xAxis: {
+    type: 'value',
+    name: '秒',
+    max: (value: { max: number }) => Math.ceil(Math.max(value.max, 2.5) * 1.2),
+    axisLabel: { color: '#6b7280' },
+    splitLine: { lineStyle: { color: '#eef0f3' } },
+  },
+  yAxis: {
+    type: 'category',
+    inverse: true,
+    data: chartRows.value.map((row) => row.route),
+    axisLabel: {
+      color: '#374151',
+      width: 180,
+      overflow: 'truncate',
+      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+    },
+    axisTick: { show: false },
+  },
   series: [
     {
-      name: 'LCP P75 (s)',
+      name: 'LCP P75',
       type: 'bar',
-      barWidth: 22,
-      data: filtered.value.map((p) => p.lcpP75),
-      itemStyle: { color: '#0077ee', borderRadius: [4, 4, 0, 0] },
-    },
-    {
-      name: 'PV',
-      type: 'line',
-      yAxisIndex: 1,
-      smooth: true,
-      data: filtered.value.map((p) => p.pv),
-      lineStyle: { color: '#f59e0b', width: 2 },
-      itemStyle: { color: '#f59e0b' },
+      barMaxWidth: 16,
+      data: chartRows.value.map((row) => ({
+        value: row.lcpP75,
+        itemStyle: {
+          color: row.lcpP75 <= 2.5 ? '#10b981' : row.lcpP75 <= 4 ? '#f59e0b' : '#ef4444',
+          borderRadius: [0, 4, 4, 0],
+        },
+      })),
+      markLine: {
+        symbol: 'none',
+        label: { formatter: '2.5s', color: '#d97706' },
+        lineStyle: { color: '#f59e0b', type: 'dashed' },
+        data: [{ xAxis: 2.5 }],
+      },
     },
   ],
 }))
-
-const sparklineOption = (base: number) => ({
-  grid: { left: 0, right: 0, top: 0, bottom: 0 },
-  xAxis: { type: 'category', show: false, data: trendSeries.lcp.map((p) => p[0]) },
-  yAxis: { type: 'value', show: false },
-  series: [
-    {
-      type: 'line',
-      smooth: true,
-      showSymbol: false,
-      lineStyle: { color: '#0077ee', width: 1.5 },
-      areaStyle: { color: 'rgba(0, 119, 238, 0.1)' },
-      data: trendSeries.lcp.map((p) => (p[1] / 2.4) * base),
-    },
-  ],
-})
 
 function goDetail(route: string) {
   router.push(`/pages/${encodeURIComponent(route)}`)
@@ -65,9 +86,52 @@ function onRowClick(row: unknown) {
   goDetail((row as { route: string }).route)
 }
 
+const vitals = computed(() => {
+  const list = rows.value
+  if (!list.length) {
+    return [
+      { name: 'LCP', tip: 'lcp_p75', value: '—', hint: '页面均值 · 良好 ≤ 2.5s' },
+      { name: 'FCP', tip: 'fcp_p75', value: '—', hint: '页面均值 · 良好 ≤ 1.8s' },
+      { name: 'INP', tip: 'inp_p75', value: '—', hint: '页面均值 · 良好 ≤ 200ms' },
+      { name: 'CLS', tip: 'cls_p75', value: '—', hint: '页面均值 · 良好 ≤ 0.1' },
+      { name: 'TTFB', tip: 'ttfb_p75', value: '—', hint: '页面均值 · 良好 ≤ 800ms' },
+      { name: '达标率', tip: 'pass_rate', value: '—', hint: '各页面达标率平均' },
+    ]
+  }
+  const avg = (pick: (row: (typeof list)[number]) => number | null) => {
+    const values = list.map(pick).filter((value): value is number => value != null)
+    if (!values.length) return null
+    return Math.round((values.reduce((sum, value) => sum + value, 0) / values.length) * 100) / 100
+  }
+  const text = (value: number | null, unit: string, round = false) => {
+    if (value == null) return '—'
+    return `${round ? Math.round(value) : value}${unit}`
+  }
+  return [
+    { name: 'LCP', tip: 'lcp_p75', value: text(avg((row) => row.lcpP75), 's'), hint: '有样本页面的均值 · 良好 ≤ 2.5s' },
+    { name: 'FCP', tip: 'fcp_p75', value: text(avg((row) => row.fcpP75), 's'), hint: '有样本页面的均值 · 良好 ≤ 1.8s' },
+    { name: 'INP', tip: 'inp_p75', value: text(avg((row) => row.inpP75), 'ms', true), hint: '有样本页面的均值 · 良好 ≤ 200ms' },
+    { name: 'CLS', tip: 'cls_p75', value: text(avg((row) => row.clsP75), ''), hint: '有样本页面的均值 · 良好 ≤ 0.1' },
+    { name: 'TTFB', tip: 'ttfb_p75', value: text(avg((row) => row.ttfbP75), 'ms', true), hint: '有样本页面的均值 · 良好 ≤ 800ms' },
+    { name: '达标率', tip: 'pass_rate', value: text(avg((row) => row.passRate), '%', true), hint: '只平均有样本的页面' },
+  ]
+})
+
 function lcpTagType(v: number) {
   if (v <= 2.5) return 'success'
   if (v <= 4) return 'warning'
+  return 'danger'
+}
+
+function fcpTagType(v: number) {
+  if (v <= 1.8) return 'success'
+  if (v <= 3) return 'warning'
+  return 'danger'
+}
+
+function ttfbTagType(v: number) {
+  if (v <= 800) return 'success'
+  if (v <= 1800) return 'warning'
   return 'danger'
 }
 </script>
@@ -85,13 +149,30 @@ function lcpTagType(v: number) {
       <div class="afm-muted">共 {{ filtered.length }} 个页面</div>
     </div>
 
+    <div class="vitals">
+      <div v-for="item in vitals" :key="item.name" class="afm-card vital">
+        <span>{{ item.name }}<MetricTip :tip="item.tip" /></span>
+        <strong>{{ item.value }}</strong>
+        <small>{{ item.hint }}</small>
+      </div>
+    </div>
+
+    <p v-if="error" class="fallback">接口暂不可用。</p>
+
     <div class="afm-card section">
       <div class="afm-section-title">
         <el-icon><TrendCharts /></el-icon>
-        页面 LCP 与流量分布
-        <span class="afm-hint">P75 · 当前筛选条件</span>
+        各页面 LCP P75
+        <span class="afm-hint">
+          越长越慢，虚线是 2.5s 良好线
+          <template v-if="filtered.length > chartRows.length">
+            · 只显示最慢的 {{ chartRows.length }} 个，其余在下方表格
+          </template>
+        </span>
       </div>
-      <EChart :option="distributionOption" height="240px" />
+      <p v-if="loading" class="afm-muted empty">正在读取页面数据…</p>
+      <EChart v-else-if="filtered.length" :option="distributionOption" :height="chartHeight" />
+      <p v-else class="afm-muted empty">还没有页面访问。</p>
     </div>
 
     <div class="afm-card section">
@@ -105,51 +186,61 @@ function lcpTagType(v: number) {
             <span class="route-link">{{ row.route }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="PV" prop="pv" width="120">
+        <el-table-column prop="pv" width="120">
+          <template #header><MetricHead label="PV" tip="pv" /></template>
           <template #default="{ row }">{{ row.pv.toLocaleString() }}</template>
         </el-table-column>
-        <el-table-column label="受影响用户" prop="affectedUsers" width="130">
+        <el-table-column prop="affectedUsers" width="150">
+          <template #header><MetricHead label="受影响用户" tip="affected_users" /></template>
           <template #default="{ row }">{{ row.affectedUsers.toLocaleString() }}</template>
         </el-table-column>
-        <el-table-column label="LCP P75" width="120">
+        <el-table-column width="128">
+          <template #header><MetricHead label="LCP P75" tip="lcp_p75" /></template>
           <template #default="{ row }">
-            <el-tag :type="lcpTagType(row.lcpP75)">{{ row.lcpP75 }}s</el-tag>
+            <span v-if="row.lcpP75 == null">—</span>
+            <el-tag v-else :type="lcpTagType(row.lcpP75)">{{ row.lcpP75 }}s</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="INP P75" width="110">
-          <template #default="{ row }">{{ row.inpP75 }}ms</template>
-        </el-table-column>
-        <el-table-column label="CLS P75" width="100">
-          <template #default="{ row }">{{ row.clsP75 }}</template>
-        </el-table-column>
-        <el-table-column label="JS Error" width="120">
-          <template #default="{ row }">{{ row.jsErrorRate }}%</template>
-        </el-table-column>
-        <el-table-column label="API P95" width="120">
-          <template #default="{ row }">{{ row.apiP95 }}ms</template>
-        </el-table-column>
-        <el-table-column label="达标率" width="140">
+        <el-table-column width="128">
+          <template #header><MetricHead label="FCP P75" tip="fcp_p75" /></template>
           <template #default="{ row }">
+            <span v-if="row.fcpP75 == null">—</span>
+            <el-tag v-else :type="fcpTagType(row.fcpP75)">{{ row.fcpP75 }}s</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column width="128">
+          <template #header><MetricHead label="INP P75" tip="inp_p75" /></template>
+          <template #default="{ row }">{{ row.inpP75 == null ? '—' : `${row.inpP75}ms` }}</template>
+        </el-table-column>
+        <el-table-column width="124">
+          <template #header><MetricHead label="CLS P75" tip="cls_p75" /></template>
+          <template #default="{ row }">{{ row.clsP75 == null ? '—' : row.clsP75 }}</template>
+        </el-table-column>
+        <el-table-column width="136">
+          <template #header><MetricHead label="TTFB P75" tip="ttfb_p75" /></template>
+          <template #default="{ row }">
+            <span v-if="row.ttfbP75 == null">—</span>
+            <el-tag v-else :type="ttfbTagType(row.ttfbP75)">{{ row.ttfbP75 }}ms</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column width="130">
+          <template #header><MetricHead label="JS Error" tip="js_error_rate" /></template>
+          <template #default="{ row }">{{ row.jsErrorRate == null ? '—' : `${row.jsErrorRate}%` }}</template>
+        </el-table-column>
+        <el-table-column width="130">
+          <template #header><MetricHead label="API P95" tip="api_p95" /></template>
+          <template #default="{ row }">{{ row.apiP95 == null ? '—' : `${row.apiP95}ms` }}</template>
+        </el-table-column>
+        <el-table-column width="150">
+          <template #header><MetricHead label="达标率" tip="pass_rate" /></template>
+          <template #default="{ row }">
+            <span v-if="row.passRate == null">—</span>
             <el-progress
+              v-else
               :percentage="row.passRate"
               :stroke-width="8"
               :status="row.passRate >= 85 ? 'success' : row.passRate >= 70 ? 'warning' : 'exception'"
             />
-          </template>
-        </el-table-column>
-        <el-table-column label="趋势" width="150">
-          <template #default="{ row }">
-            <div style="display: flex; align-items: center; gap: 8px">
-              <div style="width: 90px; height: 26px">
-                <EChart :option="sparklineOption(row.lcpP75)" height="26px" />
-              </div>
-              <el-icon v-if="row.trend === 'up'" style="color: var(--afm-danger)">
-                <CaretTop />
-              </el-icon>
-              <el-icon v-else-if="row.trend === 'down'" style="color: var(--afm-success)">
-                <CaretBottom />
-              </el-icon>
-            </div>
           </template>
         </el-table-column>
         <el-table-column label="" width="60">
@@ -172,6 +263,16 @@ function lcpTagType(v: number) {
 .section {
   margin-top: 20px;
 }
+.vitals {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+.vital span, .vital small { display: block; color: var(--afm-text-muted); font-size: 12px; }
+.vital strong { display: block; margin: 6px 0 4px; font-size: 26px; }
+.fallback { margin: 12px 0 0; color: var(--afm-warn); font-size: 13px; }
+.empty { margin: 8px 0 0; }
 .route-link {
   color: var(--afm-accent);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;

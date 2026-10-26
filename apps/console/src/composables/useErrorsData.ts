@@ -1,8 +1,9 @@
 import { onMounted, ref } from 'vue'
-import { errorGroups as mockErrorGroups, trendSeries as mockTrendSeries, type ErrorGroup } from '@/mock/data'
+import { type ErrorGroup } from '@/mock/data'
+import { monitorSearch } from '@/composables/monitorSearch'
 
 export function useErrorsData() {
-  const rows = ref<ErrorGroup[]>(mockErrorGroups)
+  const rows = ref<ErrorGroup[]>([])
   const loading = ref(false)
   const error = ref<string | null>(null)
 
@@ -11,7 +12,7 @@ export function useErrorsData() {
     error.value = null
 
     try {
-      const response = await fetch('/api/v1/errors?projectId=demo&env=production')
+      const response = await fetch(`/api/v1/errors?${monitorSearch().toString()}`)
       if (!response.ok) {
         throw new Error(`Errors request failed: ${response.status}`)
       }
@@ -19,7 +20,7 @@ export function useErrorsData() {
       rows.value = (await response.json()) as ErrorGroup[]
     } catch (err) {
       error.value = err instanceof Error ? err.message : 'Unknown error'
-      rows.value = mockErrorGroups
+      rows.value = []
     } finally {
       loading.value = false
     }
@@ -33,7 +34,6 @@ export function useErrorsData() {
     rows,
     loading,
     error,
-    trendSeries: mockTrendSeries,
     fetchErrors,
   }
 }

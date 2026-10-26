@@ -29,8 +29,18 @@ export interface OverviewMetricCard {
   value: string
   delta: string
   deltaDir: 'up' | 'down' | 'flat'
-  good: boolean
+  /** Omitted when the window has no samples, so a missing value is not marked good or bad. */
+  good?: boolean
+  hint?: string
   summary: MetricSummary
+}
+
+export interface OverviewExperienceItem {
+  name: string
+  /** null when the window has no samples */
+  value: number | null
+  note: string
+  warn: boolean
 }
 
 export interface OverviewTrendSeries {
@@ -51,6 +61,7 @@ export interface OverviewTopProblem {
 export interface OverviewPayload {
   health: OverviewHealth
   coreMetrics: OverviewMetricCard[]
+  experience: OverviewExperienceItem[]
   trendSeries: OverviewTrendSeries
   topProblems: OverviewTopProblem[]
 }

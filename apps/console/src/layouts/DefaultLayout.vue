@@ -1,35 +1,60 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
-import { ElMessage } from 'element-plus'
 import {
   DataAnalysis,
   Monitor,
   Warning,
   Connection,
   Bell,
-  List,
-  Setting,
-  Aim,
+  Document,
   Refresh,
   Fold,
   Expand,
   Search,
-  Histogram,
+  User,
+  Setting,
 } from '@element-plus/icons-vue'
 import logoMark from '@/assets/logo-mark.svg'
+import { monitorSearch } from '@/composables/monitorSearch'
 import { useFiltersStore } from '@/stores/filters'
+import { listProjects } from '@/api/projects'
 
 const route = useRoute()
 const router = useRouter()
 
 const collapse = ref(false)
+const refreshTick = ref(0)
 const filters = useFiltersStore()
-const { projects, currentProject, env, timeRange, version, device, region, versions, regions } =
-  storeToRefs(filters)
+const { currentProject, env, version, versions, timeRange, projects } = storeToRefs(filters)
+const alertCount = ref(0)
+const searchText = ref('')
+const searchOpen = ref(false)
+const searching = ref(false)
+const searchWrap = ref<HTMLElement | null>(null)
+const emptySearch = () => ({
+  pages: [] as { route: string; pv: number }[],
+  errors: [] as { id: string; message: string; route: string }[],
+  alerts: [] as { id: string; title: string; route: string; status: string }[],
+  sessions: [] as { id: string; route: string }[],
+  apis: [] as { api: string; method: string }[],
+})
+const searchResults = ref(emptySearch())
+let searchTimer: ReturnType<typeof setTimeout> | undefined
+let searchSeq = 0
 
 const activeKey = computed(() => {
+  if (route.name === 'triage') {
+    const kind = String(route.params.kind)
+    if (kind === 'error') return 'errors'
+    if (kind === 'alert') return 'alerts'
+    if (kind === 'session') return 'sessions'
+    return 'overview'
+  }
+  if (route.name === 'page-detail') return 'pages'
+  if (route.name === 'alert-detail') return 'alerts'
+  if (route.name === 'release-detail') return 'releases'
   const first = route.path.split('/').filter(Boolean)[0]
   return first || 'overview'
 })
@@ -38,20 +63,154 @@ function go(name: string) {
   router.push({ name })
 }
 
-function refreshNow() {
-  ElMessage.info('已请求最新数据（示例）')
+const searchEmpty = computed(() =>
+  !searching.value
+  && searchResults.value.pages.length === 0
+  && searchResults.value.errors.length === 0
+  && searchResults.value.alerts.length === 0
+  && searchResults.value.sessions.length === 0
+  && searchResults.value.apis.length === 0,
+)
+
+function onSearchInput() {
+  searchOpen.value = true
+  if (searchTimer) clearTimeout(searchTimer)
+  const query = searchText.value.trim()
+  if (!query) {
+    searchSeq += 1
+    searching.value = false
+    searchResults.value = emptySearch()
+    return
+  }
+  searching.value = true
+  searchTimer = setTimeout(() => {
+    void runSearch(query)
+  }, 250)
 }
 
-const navItems = [
-  { key: 'overview', label: '监控总览', icon: Monitor, name: 'overview' },
-  { key: 'pages', label: '页面性能', icon: DataAnalysis, name: 'pages' },
-  { key: 'errors', label: '错误分析', icon: Warning, name: 'errors' },
-  { key: 'apis', label: '接口分析', icon: Connection, name: 'apis' },
-  { key: 'releases', label: '版本对比', icon: Histogram, name: 'releases' },
+async function runSearch(query: string) {
+  const seq = ++searchSeq
+  searching.value = true
+  try {
+    const response = await fetch(`/api/v1/search?${monitorSearch({ q: query }).toString()}`)
+    if (seq !== searchSeq || !response.ok) return
+    searchResults.value = await response.json()
+  } catch {
+    if (seq === searchSeq) searchResults.value = emptySearch()
+  } finally {
+    if (seq === searchSeq) searching.value = false
+  }
+}
+
+function closeSearch() {
+  searchOpen.value = false
+}
+
+function openPage(pageRoute: string) {
+  closeSearch()
+  void router.push(`/pages/${encodeURIComponent(pageRoute)}`)
+}
+
+function openError(id: string) {
+  closeSearch()
+  void router.push({ name: 'triage', params: { kind: 'error', id } })
+}
+
+function openAlert(id: string) {
+  closeSearch()
+  void router.push({ name: 'alert-detail', params: { id } })
+}
+
+function openSession(id: string) {
+  closeSearch()
+  void router.push({ name: 'session-detail', params: { id } })
+}
+
+function openApi(api: string) {
+  closeSearch()
+  void router.push({ name: 'api-detail', query: { api } })
+}
+
+function onPointerDown(event: PointerEvent) {
+  if (!searchWrap.value?.contains(event.target as Node)) closeSearch()
+}
+
+function refreshNow() {
+  void loadVersions()
+  void loadAlertCount()
+  refreshTick.value += 1
+}
+
+async function loadAlertCount() {
+  try {
+    const response = await fetch(`/api/v1/alerts?${monitorSearch().toString()}`)
+    if (!response.ok) return
+    const rows = (await response.json()) as { status: string }[]
+    alertCount.value = rows.filter((row) => row.status === 'firing' || row.status === 'acknowledged').length
+  } catch {
+    alertCount.value = 0
+  }
+}
+
+async function loadVersions() {
+  try {
+    const response = await fetch(`/api/v1/releases?projectId=${encodeURIComponent(currentProject.value)}`)
+    if (!response.ok) return
+    const rows = (await response.json()) as { version: string; env: string }[]
+    const names = rows
+      .filter((row) => row.env === env.value && row.version)
+      .map((row) => row.version)
+    const unique = [...new Set(names)]
+    versions.value = ['all', ...unique]
+    if (!versions.value.includes(version.value)) {
+      version.value = 'all'
+    }
+  } catch {
+    versions.value = ['all']
+  }
+}
+
+
+async function loadFilterProjects() {
+  try {
+    const rows = await listProjects()
+    projects.value = rows.map((p) => ({ id: p.id, name: p.name }))
+    if (!projects.value.some((p) => p.id === currentProject.value) && projects.value[0]) {
+      currentProject.value = projects.value[0].id
+    }
+  } catch {
+    // 顶栏保留现有占位；项目页会再拉一次
+  }
+}
+
+onMounted(() => {
+  void loadFilterProjects()
+  void loadVersions()
+  void loadAlertCount()
+  document.addEventListener('pointerdown', onPointerDown)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', onPointerDown)
+  if (searchTimer) clearTimeout(searchTimer)
+})
+
+watch([currentProject, env], () => {
+  void loadVersions()
+})
+
+watch([currentProject, env, version], () => {
+  void loadAlertCount()
+})
+
+const workbenchItems = [
+  { key: 'overview', label: '总览', icon: Monitor, name: 'overview' },
+  { key: 'errors', label: '异常中心', icon: Warning, name: 'errors' },
+  { key: 'pages', label: '性能体验', icon: DataAnalysis, name: 'pages' },
+  { key: 'apis', label: '请求分析', icon: Connection, name: 'apis' },
+  { key: 'sessions', label: '用户会话', icon: User, name: 'sessions' },
+  { key: 'releases', label: '版本对比', icon: DataAnalysis, name: 'releases' },
   { key: 'alerts', label: '告警中心', icon: Bell, name: 'alerts' },
-  { key: 'tasks', label: '治理任务', icon: List, name: 'tasks' },
-  { key: 'settings', label: '项目设置', icon: Setting, name: 'settings' },
-  { key: 'onboarding', label: '接入验证', icon: Aim, name: 'onboarding' },
 ]
 
 const pageTitle = computed(() => (route.meta?.title as string | undefined) ?? '')
@@ -73,13 +232,21 @@ const pageTitle = computed(() => (route.meta?.title as string | undefined) ?? ''
         class="side-menu"
         :collapse="collapse"
         background-color="transparent"
-        text-color="rgba(255,255,255,0.6)"
+        text-color="rgba(255,255,255,0.62)"
         active-text-color="#ffffff"
         @select="go($event as string)"
       >
-        <el-menu-item v-for="item in navItems" :key="item.key" :index="item.name">
+        <el-menu-item v-for="item in workbenchItems" :key="item.key" :index="item.name">
           <el-icon class="nav-icon"><component :is="item.icon" /></el-icon>
           <template #title>{{ item.label }}</template>
+        </el-menu-item>
+        <el-menu-item index="projects">
+          <el-icon class="nav-icon"><Setting /></el-icon>
+          <template #title>项目</template>
+        </el-menu-item>
+        <el-menu-item index="docs">
+          <el-icon class="nav-icon"><Document /></el-icon>
+          <template #title>接入文档</template>
         </el-menu-item>
       </el-menu>
 
@@ -110,13 +277,62 @@ const pageTitle = computed(() => (route.meta?.title as string | undefined) ?? ''
         <div class="topbar-spacer" />
 
         <div class="topbar-right">
-          <el-input
-            placeholder="搜索页面、告警、任务…"
-            :prefix-icon="Search"
-            class="topbar-search"
-          />
-          <el-badge :value="5" :offset="[-6, 6]">
-            <el-button circle :icon="Bell" class="topbar-bell" />
+          <div ref="searchWrap" class="search-wrap">
+            <el-input
+              v-model="searchText"
+              placeholder="搜索页面、异常、会话、接口、告警"
+              :prefix-icon="Search"
+              class="topbar-search"
+              clearable
+              @input="onSearchInput"
+              @focus="searchOpen = Boolean(searchText.trim())"
+              @keydown.escape="closeSearch"
+            />
+            <div v-if="searchOpen && searchText.trim()" class="search-panel">
+              <p v-if="searching" class="search-empty">正在搜索…</p>
+              <p v-else-if="searchEmpty" class="search-empty">没有匹配的页面、异常、会话、接口或告警。</p>
+              <template v-else>
+                <section v-if="searchResults.pages.length">
+                  <div class="search-label">页面</div>
+                  <button v-for="item in searchResults.pages" :key="item.route" type="button" @click="openPage(item.route)">
+                    <strong>{{ item.route }}</strong>
+                    <span>PV {{ item.pv }}</span>
+                  </button>
+                </section>
+                <section v-if="searchResults.errors.length">
+                  <div class="search-label">异常</div>
+                  <button v-for="item in searchResults.errors" :key="item.id" type="button" @click="openError(item.id)">
+                    <strong>{{ item.message }}</strong>
+                    <span>{{ item.route }}</span>
+                  </button>
+                </section>
+                <section v-if="searchResults.alerts.length">
+                  <div class="search-label">告警</div>
+                  <button v-for="item in searchResults.alerts" :key="item.id" type="button" @click="openAlert(item.id)">
+                    <strong>{{ item.title }}</strong>
+                    <span>{{ item.route }}</span>
+                  </button>
+                </section>
+                <section v-if="searchResults.sessions.length">
+                  <div class="search-label">会话</div>
+                  <button v-for="item in searchResults.sessions" :key="item.id" type="button" @click="openSession(item.id)">
+                    <strong>{{ item.id }}</strong>
+                    <span>{{ item.route }}</span>
+                  </button>
+                </section>
+                <section v-if="searchResults.apis.length">
+                  <div class="search-label">接口</div>
+                  <button v-for="item in searchResults.apis" :key="item.api" type="button" @click="openApi(item.api)">
+                    <strong>{{ item.api }}</strong>
+                    <span>{{ item.method }}</span>
+                  </button>
+                </section>
+              </template>
+            </div>
+          </div>
+          <el-button circle :icon="Refresh" class="topbar-bell" aria-label="刷新数据" @click="refreshNow" />
+          <el-badge :value="alertCount" :hidden="alertCount === 0" :offset="[-6, 6]">
+            <el-button circle :icon="Bell" class="topbar-bell" aria-label="告警" @click="router.push({ name: 'alerts' })" />
           </el-badge>
           <el-avatar :size="36" class="topbar-avatar">
             L
@@ -126,53 +342,39 @@ const pageTitle = computed(() => (route.meta?.title as string | undefined) ?? ''
 
       <!-- Filter bar -->
       <div class="filter-bar">
-        <el-select v-model="currentProject" class="filter-select">
-          <el-option v-for="p in projects" :key="p.id" :label="p.name" :value="p.id" />
-        </el-select>
-        <el-select v-model="env" class="filter-select">
-          <el-option label="生产" value="production" />
-          <el-option label="预发" value="staging" />
-          <el-option label="开发" value="development" />
-        </el-select>
-        <el-select v-model="timeRange" class="filter-select">
-          <el-option label="最近 15 分钟" value="15m" />
-          <el-option label="最近 1 小时" value="1h" />
-          <el-option label="最近 6 小时" value="6h" />
-          <el-option label="最近 24 小时" value="24h" />
-          <el-option label="最近 7 天" value="7d" />
-          <el-option label="最近 30 天" value="30d" />
-        </el-select>
-        <el-select v-model="version" class="filter-select">
-          <el-option
-            v-for="v in versions"
-            :key="v"
-            :label="v === 'all' ? '全部版本' : v"
-            :value="v"
-          />
-        </el-select>
-        <el-select v-model="device" class="filter-select">
-          <el-option label="全部设备" value="all" />
-          <el-option label="桌面端" value="desktop" />
-          <el-option label="移动端" value="mobile" />
-          <el-option label="平板" value="tablet" />
-        </el-select>
-        <el-select v-model="region" class="filter-select">
-          <el-option
-            v-for="r in regions"
-            :key="r"
-            :label="r === 'all' ? '全部地区' : r"
-            :value="r"
-          />
-        </el-select>
-        <el-button :icon="Refresh" plain size="default" @click="refreshNow">
-          刷新
-        </el-button>
+        <div class="filter-group">
+          <label class="filter-field">
+            <span>应用</span>
+            <el-select v-model="currentProject">
+              <el-option v-for="p in projects" :key="p.id" :label="p.name" :value="p.id" />
+            </el-select>
+          </label>
+          <label class="filter-field">
+            <span>环境</span>
+            <el-select v-model="env">
+              <el-option label="生产" value="production" />
+              <el-option label="预发" value="staging" />
+              <el-option label="开发" value="development" />
+            </el-select>
+          </label>
+          <label class="filter-field">
+            <span>版本</span>
+            <el-select v-model="version">
+              <el-option v-for="v in versions" :key="v" :label="v === 'all' ? '全部版本' : v" :value="v" />
+            </el-select>
+          </label>
+        </div>
+        <el-radio-group v-model="timeRange" class="window-switch">
+          <el-radio-button value="24h">近 24 小时</el-radio-button>
+          <el-radio-button value="7d">近 7 天</el-radio-button>
+          <el-radio-button value="30d">近 30 天</el-radio-button>
+        </el-radio-group>
       </div>
 
       <el-main class="main-area">
         <router-view v-slot="{ Component, route: r }">
           <transition name="apple-fade" mode="out-in">
-            <component :is="Component" :key="r.fullPath" />
+            <component :is="Component" :key="`${r.fullPath}-${refreshTick}-${currentProject}-${env}-${version}-${timeRange}`" />
           </transition>
         </router-view>
       </el-main>
@@ -196,21 +398,10 @@ export default {
   background: linear-gradient(180deg, #0c1626 0%, #0f172a 50%, #0b1120 100%);
   display: flex;
   flex-direction: column;
-  border-right: 1px solid rgba(255, 255, 255, 0.04);
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
   transition: width var(--afm-motion-base) var(--afm-ease);
   overflow: hidden;
   position: relative;
-}
-
-.side::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: 1px;
-  background: linear-gradient(180deg, rgba(0, 119, 238, 0.15) 0%, transparent 100%);
-  pointer-events: none;
 }
 
 /* ── Brand ── */
@@ -219,21 +410,10 @@ export default {
   align-items: center;
   gap: 14px;
   padding: 18px 20px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   min-height: 64px;
   flex-shrink: 0;
   position: relative;
-}
-
-.brand::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 3px;
-  background: linear-gradient(180deg, #0077ee 0%, #38bdf8 100%);
-  border-radius: 0 2px 2px 0;
 }
 
 .brand.collapsed {
@@ -264,6 +444,7 @@ export default {
   border-right: 0;
   padding: 12px 8px;
   background: transparent !important;
+  overflow-y: auto;
 }
 
 .side-menu :deep(.el-menu-item) {
@@ -280,11 +461,12 @@ export default {
 }
 
 .side-menu :deep(.el-menu-item):hover {
-  background: rgba(0, 119, 238, 0.12) !important;
+  background: rgba(255, 255, 255, 0.06) !important;
+  color: #fff !important;
 }
 
 .side-menu :deep(.el-menu-item.is-active) {
-  background: rgba(0, 119, 238, 0.2) !important;
+  background: rgba(0, 119, 238, 0.22) !important;
   color: #fff !important;
   position: relative;
 }
@@ -292,12 +474,12 @@ export default {
 .side-menu :deep(.el-menu-item.is-active)::before {
   content: '';
   position: absolute;
-  right: 10px;
+  left: 0;
   top: 50%;
   transform: translateY(-50%);
-  width: 4px;
-  height: 20px;
-  background: linear-gradient(180deg, #38bdf8, #0077ee);
+  width: 3px;
+  height: 22px;
+  background: #7ec8ff;
   border-radius: 2px;
 }
 
@@ -329,16 +511,14 @@ export default {
 }
 
 .side-collapse:hover {
-  color: rgba(56, 189, 248, 0.9);
-  background: rgba(56, 189, 248, 0.08);
+  color: #dbe4df;
+  background: rgba(255, 255, 255, 0.06);
 }
 
 /* ── Top bar (frosted glass) ── */
 .topbar {
-  background: var(--afm-glass);
-  backdrop-filter: blur(24px) saturate(150%);
-  -webkit-backdrop-filter: blur(24px) saturate(150%);
-  border-bottom: 1px solid var(--afm-glass-border);
+  background: #fff;
+  border-bottom: 1px solid var(--afm-border);
   display: flex;
   align-items: center;
   padding: 0 28px;
@@ -379,12 +559,72 @@ export default {
   flex-shrink: 0;
 }
 
-.topbar-search {
+.search-wrap {
+  position: relative;
   width: 280px;
 }
 
+.topbar-search {
+  width: 100%;
+}
+
+.search-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 360px;
+  max-height: 420px;
+  overflow: auto;
+  padding: 8px;
+  background: #fff;
+  border: 1px solid var(--afm-border);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.12);
+  z-index: 30;
+}
+
+.search-label {
+  padding: 6px 8px 2px;
+  color: var(--afm-text-muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.search-panel button {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.search-panel button:hover {
+  background: var(--afm-panel-soft);
+}
+
+.search-panel strong {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.search-panel span,
+.search-empty {
+  color: var(--afm-text-muted);
+  font-size: 12px;
+}
+
+.search-empty {
+  margin: 8px;
+}
+
 .topbar-search :deep(.el-input__wrapper) {
-  background: var(--afm-bg);
+  background: var(--afm-panel-soft);
   box-shadow: none;
   border-radius: var(--afm-radius);
   border: 1px solid var(--afm-border);
@@ -407,7 +647,7 @@ export default {
 .topbar-avatar {
   background: var(--afm-accent);
   color: #fff;
-  border: 2px solid rgba(0, 119, 238, 0.3);
+  border: 2px solid rgba(0, 119, 238, 0.28);
   cursor: pointer;
   font-size: 15px;
   font-weight: 600;
@@ -436,41 +676,95 @@ export default {
 
 /* ── Filter bar (frosted glass) ── */
 .filter-bar {
-  background: var(--afm-glass);
-  backdrop-filter: blur(24px) saturate(150%);
-  -webkit-backdrop-filter: blur(24px) saturate(150%);
-  border-bottom: 1px solid var(--afm-glass-border);
-  padding: 12px 28px;
+  min-height: 54px;
+  background: #fff;
+  border-bottom: 1px solid var(--afm-border);
+  padding: 8px 24px;
   display: flex;
   align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 16px;
   flex-shrink: 0;
 }
 
-.filter-select {
-  width: 160px;
+.filter-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex-wrap: wrap;
 }
 
-.filter-select :deep(.el-input__wrapper) {
-  background: var(--afm-bg);
-  box-shadow: none;
-  border-radius: var(--afm-radius-sm);
+.filter-field {
+  display: flex;
+  align-items: center;
+  height: 34px;
   border: 1px solid var(--afm-border);
-  padding: 0 10px;
+  border-radius: 5px;
+  background: #fff;
+  overflow: hidden;
 }
 
-.filter-select :deep(.el-input__wrapper:hover) {
-  border-color: var(--afm-border-strong);
+.filter-field > span {
+  color: var(--afm-text-subtle);
+  font-size: 11px;
+  border-right: 1px solid var(--afm-border);
+  padding: 0 8px;
+  line-height: 34px;
+  white-space: nowrap;
 }
 
-.filter-select :deep(.el-input__wrapper.is-focus) {
+.filter-field :deep(.el-select) {
+  width: 128px;
+}
+
+.filter-field :deep(.el-select__wrapper) {
+  min-height: 32px;
+  padding: 0 8px;
+  background: transparent;
+  border-radius: 0;
+  box-shadow: none;
+  font-size: 12px;
+}
+
+.filter-field :deep(.el-select__wrapper.is-focused),
+.filter-field :deep(.el-select__wrapper.is-hovering) {
+  box-shadow: none;
+}
+
+.filter-field :deep(.el-select__selected-item),
+.filter-field :deep(.el-select__placeholder) {
+  font-size: 12px;
+  color: var(--afm-text);
+}
+
+.filter-field:focus-within {
   border-color: var(--afm-accent);
-  box-shadow: 0 0 0 2px var(--afm-accent-soft);
+  box-shadow: 0 0 0 3px var(--afm-accent-soft);
 }
 
-.filter-select :deep(.el-input__inner) {
-  font-size: 14px;
+.window-switch {
+  flex-shrink: 0;
+}
+.window-switch :deep(.el-radio-button__inner) {
+  height: 32px;
+  padding: 0 12px;
+  line-height: 30px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--afm-text-muted);
+  background: var(--afm-panel-soft);
+  border-color: var(--afm-border);
+  box-shadow: none;
+}
+.window-switch :deep(.el-radio-button__inner:hover) {
+  color: var(--afm-accent);
+}
+.window-switch :deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) {
+  background: var(--afm-accent);
+  border-color: var(--afm-accent);
+  color: #fff;
+  box-shadow: none;
 }
 
 /* ── Main area ── */
@@ -497,7 +791,7 @@ export default {
 }
 
 @media (max-width: 1100px) {
-  .topbar-search {
+  .search-wrap {
     display: none;
   }
 }

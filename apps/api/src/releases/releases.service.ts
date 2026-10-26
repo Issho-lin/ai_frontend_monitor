@@ -25,18 +25,18 @@ export interface ReleaseDetailResult {
     metrics: {
       metric: string;
       unit: string;
-      before: number;
-      after: number;
-      changePct: number;
+      before: number | null;
+      after: number | null;
+      changePct: number | null;
       bad: boolean;
     }[];
     pages: {
       route: string;
       metric: string;
-      before: number;
-      after: number;
+      before: number | null;
+      after: number | null;
       unit: string;
-      changePct: number;
+      changePct: number | null;
     }[];
     resources: {
       url: string;
@@ -55,8 +55,8 @@ export interface ReleaseDetailResult {
     apis: {
       api: string;
       kind: 'new' | 'changed';
-      p95Before: number;
-      p95After: number;
+      p95Before: number | null;
+      p95After: number | null;
     }[];
     alerts: {
       id: string;
@@ -82,11 +82,17 @@ interface MetricBundleRow {
   cls: number | null;
   api_p95: number | null;
   js_error_rate: number | null;
+  lcp_n: number;
+  inp_n: number;
+  cls_n: number;
+  api_n: number;
+  pv_n: number;
 }
 
 interface PageLcpRow {
   route: string;
   lcp: number | null;
+  lcp_n: number;
 }
 
 interface ResourceRow {
@@ -95,6 +101,7 @@ interface ResourceRow {
 }
 
 interface ErrorRow {
+  id: string;
   hash: string;
   message: string;
   cnt: number;
@@ -269,7 +276,12 @@ export class ReleasesService {
           quantileIf(0.75)(metric_value, event_type = 'web_vital' AND metric_name = 'INP') AS inp,
           quantileIf(0.75)(metric_value, event_type = 'web_vital' AND metric_name = 'CLS') AS cls,
           quantileIf(0.95)(duration, event_type = 'api_timing') AS api_p95,
-          (countIf(event_type = 'error') / nullIf(countIf(event_type = 'page_view'), 0)) * 100 AS js_error_rate
+          (countIf(event_type = 'error') / nullIf(countIf(event_type = 'page_view'), 0)) * 100 AS js_error_rate,
+          countIf(event_type = 'web_vital' AND metric_name = 'LCP') AS lcp_n,
+          countIf(event_type = 'web_vital' AND metric_name = 'INP') AS inp_n,
+          countIf(event_type = 'web_vital' AND metric_name = 'CLS') AS cls_n,
+          countIf(event_type = 'api_timing') AS api_n,
+          countIf(event_type = 'page_view') AS pv_n
         FROM afm.rum_events
         WHERE project_id = {projectId:String}
           AND env = {env:String}
@@ -287,14 +299,15 @@ export class ReleasesService {
       query: `
         SELECT
           route,
-          quantileIf(0.75)(metric_value, event_type = 'web_vital' AND metric_name = 'LCP') AS lcp
+          quantileIf(0.75)(metric_value, event_type = 'web_vital' AND metric_name = 'LCP') AS lcp,
+          countIf(event_type = 'web_vital' AND metric_name = 'LCP') AS lcp_n
         FROM afm.rum_events
         WHERE project_id = {projectId:String}
           AND env = {env:String}
           AND release = {version:String}
           AND route != ''
         GROUP BY route
-        HAVING lcp > 0
+        HAVING lcp_n > 0
         ORDER BY lcp DESC
         LIMIT 10
       `,
@@ -330,6 +343,7 @@ export class ReleasesService {
     const result = await this.clickhouse.query({
       query: `
         SELECT
+          concat('err-', lower(hex(cityHash64(concat(error_stack_hash, {version:String}))))) AS id,
           error_stack_hash AS hash,
           coalesce(nullIf(argMin(toString(attributes.message), timestamp), ''), any(error_name)) AS message,
           count() AS cnt
@@ -371,36 +385,62 @@ export class ReleasesService {
   }
 
   private buildMetrics(before: MetricBundleRow | null, after: MetricBundleRow | null) {
-    const pairs: { metric: string; unit: string; beforeRaw: number; afterRaw: number; scale: number; badIfUp: boolean }[] = [
-      { metric: 'LCP P75', unit: 's', beforeRaw: before?.lcp ?? 0, afterRaw: after?.lcp ?? 0, scale: 1000, badIfUp: true },
-      { metric: 'INP P75', unit: 'ms', beforeRaw: before?.inp ?? 0, afterRaw: after?.inp ?? 0, scale: 1, badIfUp: true },
-      { metric: 'CLS P75', unit: '', beforeRaw: before?.cls ?? 0, afterRaw: after?.cls ?? 0, scale: 1, badIfUp: true },
-      { metric: 'API P95', unit: 'ms', beforeRaw: before?.api_p95 ?? 0, afterRaw: after?.api_p95 ?? 0, scale: 1, badIfUp: true },
-      { metric: 'JS Error Rate', unit: '%', beforeRaw: before?.js_error_rate ?? 0, afterRaw: after?.js_error_rate ?? 0, scale: 1, badIfUp: true },
+    const pairs: { metric: string; unit: string; before: number | null; after: number | null }[] = [
+      {
+        metric: 'LCP P75',
+        unit: 's',
+        before: this.metricValue(before, 'lcp', 'lcp_n', 1000),
+        after: this.metricValue(after, 'lcp', 'lcp_n', 1000),
+      },
+      {
+        metric: 'INP P75',
+        unit: 'ms',
+        before: this.metricValue(before, 'inp', 'inp_n', 1),
+        after: this.metricValue(after, 'inp', 'inp_n', 1),
+      },
+      {
+        metric: 'CLS P75',
+        unit: '',
+        before: this.metricValue(before, 'cls', 'cls_n', 1),
+        after: this.metricValue(after, 'cls', 'cls_n', 1),
+      },
+      {
+        metric: 'API P95',
+        unit: 'ms',
+        before: this.metricValue(before, 'api_p95', 'api_n', 1),
+        after: this.metricValue(after, 'api_p95', 'api_n', 1),
+      },
+      {
+        metric: 'JS Error Rate',
+        unit: '%',
+        before: this.errorRate(before),
+        after: this.errorRate(after),
+      },
     ];
 
-    return pairs.map((item) => {
-      const beforeValue = item.scale === 1000 ? this.toSeconds(item.beforeRaw) : this.round(item.beforeRaw, item.unit === '' ? 3 : 1);
-      const afterValue = item.scale === 1000 ? this.toSeconds(item.afterRaw) : this.round(item.afterRaw, item.unit === '' ? 3 : 1);
-      const changePct = this.changePct(beforeValue, afterValue);
-      return {
-        metric: item.metric,
-        unit: item.unit,
-        before: beforeValue,
-        after: afterValue,
-        changePct,
-        bad: item.badIfUp ? changePct > 5 : changePct < -5,
-      };
-    });
+    return pairs
+      .filter((item) => item.before != null || item.after != null)
+      .map((item) => {
+        const changePct = this.changePct(item.before, item.after);
+        return {
+          metric: item.metric,
+          unit: item.unit,
+          before: item.before,
+          after: item.after,
+          changePct,
+          bad: changePct != null && changePct > 5,
+        };
+      });
   }
 
   private buildPages(before: PageLcpRow[], after: PageLcpRow[]) {
-    const beforeMap = new Map(before.map((row) => [row.route, this.toSeconds(row.lcp)]));
-    const routes = new Set([...before.map((row) => row.route), ...after.map((row) => row.route)]);
+    const beforeMap = new Map(before.map((row) => [row.route, this.metricSeconds(row.lcp, row.lcp_n)]));
+    const afterMap = new Map(after.map((row) => [row.route, this.metricSeconds(row.lcp, row.lcp_n)]));
+    const routes = new Set([...beforeMap.keys(), ...afterMap.keys()]);
     return [...routes]
       .map((route) => {
-        const beforeValue = beforeMap.get(route) ?? 0;
-        const afterValue = this.toSeconds(after.find((row) => row.route === route)?.lcp ?? null);
+        const beforeValue = beforeMap.get(route) ?? null;
+        const afterValue = afterMap.get(route) ?? null;
         return {
           route,
           metric: 'LCP P75',
@@ -410,7 +450,7 @@ export class ReleasesService {
           changePct: this.changePct(beforeValue, afterValue),
         };
       })
-      .sort((a, b) => Math.abs(b.changePct) - Math.abs(a.changePct))
+      .sort((a, b) => Math.abs(b.changePct ?? 0) - Math.abs(a.changePct ?? 0))
       .slice(0, 8);
   }
 
@@ -443,7 +483,7 @@ export class ReleasesService {
       if (!prev) kind = 'new';
       else if (!next) kind = 'gone';
       rows.push({
-        id: hash.slice(0, 10),
+        id: next?.id || prev?.id || hash,
         message: next?.message || prev?.message || hash,
         kind,
         countBefore: prev?.cnt ?? 0,
@@ -459,12 +499,12 @@ export class ReleasesService {
     const apis = new Set([...beforeMap.keys(), ...afterMap.keys()]);
     const rows: ReleaseDetailResult['diff']['apis'] = [];
     for (const api of apis) {
-      const p95Before = beforeMap.get(api) ?? 0;
-      const p95After = afterMap.get(api) ?? 0;
-      if (beforeMap.has(api) && Math.abs(p95After - p95Before) < 20) continue;
+      const p95Before = beforeMap.has(api) ? beforeMap.get(api)! : null;
+      const p95After = afterMap.has(api) ? afterMap.get(api)! : null;
+      if (p95Before != null && p95After != null && Math.abs(p95After - p95Before) < 20) continue;
       rows.push({
         api,
-        kind: beforeMap.has(api) ? 'changed' : 'new',
+        kind: p95Before == null ? 'new' : 'changed',
         p95Before,
         p95After,
       });
@@ -485,7 +525,7 @@ export class ReleasesService {
       return { shift: '—', dir: 'flat' as const };
     }
     const pct = this.changePct(before, after);
-    if (Math.abs(pct) < 5) {
+    if (pct == null || Math.abs(pct) < 5) {
       return { shift: '基本持平', dir: 'flat' as const };
     }
     const sign = pct > 0 ? '+' : '';
@@ -495,11 +535,36 @@ export class ReleasesService {
     };
   }
 
-  private changePct(before: number, after: number) {
-    if (!before) {
-      return after ? 100 : 0;
-    }
+  private changePct(before: number | null, after: number | null) {
+    if (before == null || after == null || before === 0) return null;
     return Number((((after - before) / before) * 100).toFixed(1));
+  }
+
+  private metricValue(
+    row: MetricBundleRow | null,
+    valueKey: 'lcp' | 'inp' | 'cls' | 'api_p95',
+    countKey: 'lcp_n' | 'inp_n' | 'cls_n' | 'api_n',
+    scale: number,
+  ) {
+    if (!row || !Number.isFinite(Number(row[countKey])) || Number(row[countKey]) <= 0) return null;
+    const numeric = Number(row[valueKey]);
+    if (!Number.isFinite(numeric)) return null;
+    const value = scale === 1000 ? numeric / 1000 : numeric;
+    const digits = valueKey === 'cls' ? 3 : scale === 1000 ? 1 : 0;
+    return Number(value.toFixed(digits));
+  }
+
+  private metricSeconds(ms: number | null, count: number) {
+    if (!Number.isFinite(Number(count)) || Number(count) <= 0) return null;
+    const numeric = Number(ms);
+    if (!Number.isFinite(numeric)) return null;
+    return Number((numeric / 1000).toFixed(1));
+  }
+
+  private errorRate(row: MetricBundleRow | null) {
+    if (!row || !Number.isFinite(Number(row.pv_n)) || Number(row.pv_n) <= 0) return null;
+    const numeric = Number(row.js_error_rate);
+    return Number.isFinite(numeric) ? Number(numeric.toFixed(2)) : null;
   }
 
   private toSeconds(ms: number | null | undefined) {
@@ -507,10 +572,6 @@ export class ReleasesService {
       return 0;
     }
     return Number((Number(ms) / 1000).toFixed(1));
-  }
-
-  private round(value: number, digits: number) {
-    return Number(Number(value || 0).toFixed(digits));
   }
 
   private releaseId(version: string) {

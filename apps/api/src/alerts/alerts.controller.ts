@@ -1,5 +1,6 @@
 import { Body, Controller, Get, NotFoundException, Param, Patch, Query } from '@nestjs/common';
 import { AlertsService } from './alerts.service';
+import { normalizeRelease, normalizeWindow } from '../scope';
 
 interface AlertActionBody {
   action?: string;
@@ -14,8 +15,10 @@ export class AlertsController {
   getAlerts(
     @Query('projectId') projectId = 'demo',
     @Query('env') env = 'production',
+    @Query('release') release = '',
+    @Query('window') window = '',
   ) {
-    return this.alertsService.list(projectId, env);
+    return this.alertsService.list(projectId, env, normalizeRelease(release), normalizeWindow(window));
   }
 
   @Get(':id')
