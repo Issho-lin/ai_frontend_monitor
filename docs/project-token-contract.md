@@ -1,7 +1,10 @@
 # Project token contract (gateway ingest)
 
-Console multi-project CRUD / token minting is **out of scope**. Auth is a static
-`projectId → token` map loaded from environment on the **gateway**.
+Mint and revoke tokens with `/api/v1/projects` (see [M5-projects-console.md](./M5-projects-console.md)).
+Gateway accepts `x-project-token` when its SHA-256 matches a non-revoked `project_tokens` row for that `projectId`.
+Plaintext is stored only in the create-token response, never in Postgres.
+
+`AFM_PROJECT_TOKENS` / `PROJECT_TOKENS` seed an **empty** `projects` table and remain a fallback when Postgres is unreachable, or when that `projectId` has no `projects` row yet.
 
 ## Ingest auth
 
@@ -15,9 +18,11 @@ Console multi-project CRUD / token minting is **out of scope**. Auth is a static
 Rules:
 
 1. Both `projectId` and token are required.
-2. Token must **exactly** match the configured value for that `projectId`.
-3. Unknown project / wrong token → `401 Unauthorized` (`Invalid project token.` / missing field messages).
-4. Hardcoded single-demo check is removed; configuration is the source of truth.
+2. A live DB row wins: `project_tokens.token_hash` = lowercase hex SHA-256 of the UTF-8 plaintext, `enabled`, `revoked_at IS NULL`, same `project_id`.
+3. Unknown project / wrong token / revoked token → `401 Unauthorized` (`Invalid project token.` / missing field messages).
+4. Env map is **not** consulted when the project row exists. A revoked token stays rejected even if the env map still lists that plaintext.
+5. If Postgres errors, or there is no `projects` row, the env map is an exact plaintext fallback (so `demo` / `afm-demo-token` keeps working before seed).
+6. Gateway caches the verdict for `AFM_TOKEN_CACHE_TTL_MS` (default `5000`). Mint, revoke, and project delete run `NOTIFY afm_project_tokens` to drop that cache. DB tokens do not need a gateway restart. If a notification is missed, the TTL is the backstop.
 
 ### Env configuration
 
@@ -30,8 +35,10 @@ PROJECT_TOKENS='{"demo":"afm-demo-token"}'
 ```
 
 - Value must be a JSON **object** of string → string.
-- If **both** are unset/empty, gateway defaults to `{"demo":"afm-demo-token"}` so local Demo keeps working.
-- Restart gateway after changing the map.
+- If **both** are unset/empty, the map defaults to `{"demo":"afm-demo-token"}` so local Demo keeps working.
+- API startup inserts that map only when `projects` is empty (hash + `token_masked`; name `环境变量种子`). A non-empty table is not re-seeded.
+- Changing the env map still needs a process restart to change the **fallback**. Tokens minted in the API apply without a gateway restart.
+- `DELETE /api/v1/projects/:id` is a hard delete and cascades token rows. After that, if the same id is still in the env map and has no `projects` row, the env fallback can accept it again.
 
 ### Demo default
 

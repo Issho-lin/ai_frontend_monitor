@@ -18,7 +18,7 @@ Gateway ingest 校验改为认「库里的有效 Token」（可与启动时 env 
 | GET | `/api/v1/projects` | 列表 |
 | POST | `/api/v1/projects` | 创建 `{ id, name, env }` |
 | PATCH | `/api/v1/projects/:id` | 改 name/env |
-| DELETE | `/api/v1/projects/:id` | 删除（或软删，实现选定后文档补一句） |
+| DELETE | `/api/v1/projects/:id` | **硬删除**（204）：删项目行并 `ON DELETE CASCADE` 删掉其 token 行；alerts/issues/tasks 不级联 |
 | GET | `/api/v1/projects/:id/tokens` | Token 列表（仅掩码，无明文） |
 | POST | `/api/v1/projects/:id/tokens` | 生成；**响应仅此一次**含 `tokenPlain` |
 | POST | `/api/v1/projects/:id/tokens/:tokenId/revoke` | 吊销 |
@@ -36,9 +36,10 @@ Console：
 
 Gateway：
 
-- ingest 校验：有效 token ∈ 该 `projectId` 下未吊销记录（查 API/共享存储；具体实现后端定）。
-- **迁移：** 启动时若库空，可用现有 `AFM_PROJECT_TOKENS` 种子写入（Demo `demo`/`afm-demo-token` 不断）。
+- ingest 校验：有效 token ∈ 该 `projectId` 下未吊销记录。Gateway 直连同一 Postgres，按 SHA-256(明文) 查 `project_tokens`（`enabled` 且 `revoked_at IS NULL`）。命中缓存 `AFM_TOKEN_CACHE_TTL_MS`（默认 5s）；API 在签发/吊销/删除后 `NOTIFY afm_project_tokens` 清缓存，新 Token 不必重启 Gateway。
+- **迁移：** API 启动时若 `projects` 为空，把 `AFM_PROJECT_TOKENS`（否则 `PROJECT_TOKENS`，再否则 `demo`/`afm-demo-token`）种子写入（只存 hash + 掩码）。库不可达，或该 projectId 还没有项目行时，Gateway 仍用 env 映射兜底。已入库项目的错 Token / 已吊销 Token 不会被 env 放行。
 - 限流、脱敏不变。
+- 表由 API 启动时 `CREATE TABLE IF NOT EXISTS` 补齐（已有数据卷不会重跑 `infra/postgres/init`）；新库另有 `infra/postgres/init/03-create-projects.sql`。没有单独的 migration CLI。
 
 ## 不做
 

@@ -1,5 +1,10 @@
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
-import { Pool, type QueryResult, type QueryResultRow } from 'pg';
+import {
+  Pool,
+  type PoolClient,
+  type QueryResult,
+  type QueryResultRow,
+} from 'pg';
 
 const CREATE_ALERTS_TABLE = `
 CREATE TABLE IF NOT EXISTS alerts (
@@ -99,6 +104,52 @@ CREATE INDEX IF NOT EXISTS issues_project_env_status_idx
   ON issues (project_id, env, workflow_status, updated_at DESC);
 `;
 
+/** M5: projects + token hashes. Plaintext tokens are never stored. */
+const CREATE_PROJECTS_TABLE = `
+CREATE TABLE IF NOT EXISTS projects (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  env TEXT NOT NULL CHECK (env IN ('production', 'staging', 'development')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS project_tokens (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  -- Lowercase hex SHA-256 of the UTF-8 plaintext. Plaintext is never stored.
+  token_hash TEXT NOT NULL,
+  token_masked TEXT NOT NULL,
+  name TEXT NOT NULL DEFAULT '',
+  enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_used_at TIMESTAMPTZ,
+  revoked_at TIMESTAMPTZ
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS project_tokens_hash_unique
+  ON project_tokens (token_hash);
+
+CREATE INDEX IF NOT EXISTS project_tokens_project_id_idx
+  ON project_tokens (project_id, created_at DESC);
+
+-- Earlier drafts used these names. Drop them when the canonical index exists
+-- so a restarted API does not keep two indexes on the same column.
+DROP INDEX IF EXISTS project_tokens_token_hash_uq;
+DROP INDEX IF EXISTS project_tokens_project_idx;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'projects_env_check'
+  ) THEN
+    ALTER TABLE projects
+      ADD CONSTRAINT projects_env_check
+      CHECK (env IN ('production', 'staging', 'development'));
+  END IF;
+END $$;
+`;
+
 @Injectable()
 export class PostgresService implements OnModuleInit, OnModuleDestroy {
   private readonly pool = new Pool({
@@ -112,6 +163,7 @@ export class PostgresService implements OnModuleInit, OnModuleDestroy {
   async onModuleInit() {
     await this.pool.query(CREATE_ALERTS_TABLE);
     await this.pool.query(MIGRATE_ALERTS_TABLE);
+    await this.pool.query(CREATE_PROJECTS_TABLE);
   }
 
   async onModuleDestroy() {
@@ -123,5 +175,15 @@ export class PostgresService implements OnModuleInit, OnModuleDestroy {
     params?: unknown[],
   ): Promise<QueryResult<T>> {
     return this.pool.query<T>(text, params);
+  }
+
+  /** One pooled connection for advisory locks / multi-statement transactions. */
+  async withClient<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
+    const client = await this.pool.connect();
+    try {
+      return await fn(client);
+    } finally {
+      client.release();
+    }
   }
 }

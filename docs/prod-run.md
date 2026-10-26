@@ -15,7 +15,7 @@ put Caddy or nginx with TLS in front when you expose the stack.
 # from repository root
 cp -n .env.example .env
 
-# optional: set real tokens / passwords in .env
+# optional: empty-database seed + gateway fallback (live tokens are minted via the API)
 # AFM_PROJECT_TOKENS={"demo":"afm-demo-token","acme":"…"}
 
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build

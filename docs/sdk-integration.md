@@ -77,9 +77,9 @@ import {
 
 ### Token 与 Console（定稿）
 
-- **鉴权契约**：`POST /ingest` 必带 header `x-project-token` + body/query `projectId`。Token 映射来自 Gateway 环境变量 `AFM_PROJECT_TOKENS`（或别名 `PROJECT_TOKENS`）JSON，例如 `{"demo":"afm-demo-token"}`。未配置时 Gateway **默认仍认** `demo` + `afm-demo-token`。完整规则见 [project-token-contract.md](./project-token-contract.md)。
-- **Console**：当前 **无** 项目 CRUD / Token 铸造 UI。验收与排障时在顶栏填写与 SDK 一致的 `projectId`（及 `env`）；SDK 侧用 `afmInit({ projectId, token })` 带上映射表中的明文 token。
-- **轮换**：改 Gateway 环境变量中的 JSON 映射并重启 gateway；业务侧同步更新 `afmInit` 的 `token`。
+- **鉴权契约**：`POST /ingest` 必带 header `x-project-token` + body/query `projectId`。Gateway 认该项目在库里未吊销的 Token（SHA-256）。`AFM_PROJECT_TOKENS`（或 `PROJECT_TOKENS`）只在 `projects` 表为空时种子写入，并在数据库不可达时兜底；两者都未配置时仍默认 `demo` + `afm-demo-token`。完整规则见 [project-token-contract.md](./project-token-contract.md)。
+- **Console**：发 Token 的 API 是 `POST /api/v1/projects/:id/tokens`（明文只在这次响应里）。页面是否仍走 mock 由 `USE_PROJECTS_MOCK` 决定，接真另做。
+- **轮换**：调吊销接口后再签发新 Token，不必为新 Token 改 env 或重启 Gateway。业务侧同步更新 `afmInit` 的 `token`。
 - **Demo 默认**：本地仍可用 `projectId: 'demo'`、`token: 'afm-demo-token'`（与默认映射一致）。**不要**把 demo token 用于正式环境——生产请在 `.env` / compose 中配置真实映射，见 [prod-run.md](./prod-run.md)。
 
 ### 最小初始化示例
@@ -215,10 +215,10 @@ Console Overview 验收时顶栏填同一 `demo` / `production`。详见 [local-
 
 | 项 | 定稿 |
 |----|------|
-| 配置 | `AFM_PROJECT_TOKENS='{"demo":"afm-demo-token","acme":"…"}'`（优先）；未设时可用 `PROJECT_TOKENS` |
-| 默认 | 两者皆空 → `{"demo":"afm-demo-token"}` |
-| Console | **无** 项目 CRUD / 发 Token UI；顶栏填 `projectId`，业务 SDK 带对应 token |
-| 轮换 | 改 env JSON → 重启 gateway → 业务更新 `afmInit({ token })` |
+| 配置 | 库内未吊销 Token。空库种子 / 兜底：`AFM_PROJECT_TOKENS`（优先）或 `PROJECT_TOKENS` |
+| 默认 | 两者皆空 → `{"demo":"afm-demo-token"}`（写入空库或作兜底） |
+| Console | `POST /api/v1/projects/:id/tokens` 签发；`USE_PROJECTS_MOCK` 仍可能让页面走 mock |
+| 轮换 | 吊销后再签发；Gateway 认库，新 Token 不必改 env / 重启 |
 
 ### 采样与限流
 

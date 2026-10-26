@@ -74,9 +74,17 @@ services:
       GATEWAY_PORT: 3001
       KAFKA_BROKER: redpanda:9092
       AFM_PROJECT_TOKENS: ${AFM_PROJECT_TOKENS:-}
+      AFM_TOKEN_CACHE_TTL_MS: ${AFM_TOKEN_CACHE_TTL_MS:-5000}
       INGEST_RATE_LIMIT: ${INGEST_RATE_LIMIT:-120}
       INGEST_RATE_WINDOW_MS: ${INGEST_RATE_WINDOW_MS:-60000}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-afm}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-CHANGE_ME_DEV_SECRET}
+      POSTGRES_DB: ${POSTGRES_DB:-afm}
     depends_on:
+      postgres:
+        condition: service_healthy
       redpanda:
         condition: service_healthy
     networks:

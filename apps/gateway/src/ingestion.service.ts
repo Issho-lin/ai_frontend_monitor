@@ -28,7 +28,7 @@ export class IngestionService {
       throw new HttpException('Too Many Requests', HttpStatus.TOO_MANY_REQUESTS);
     }
 
-    this.authService.assertAuthorized(projectId, headerOrBodyToken);
+    await this.authService.assertAuthorized(projectId, headerOrBodyToken);
 
     const scrubbed = redactIngestFields(payload);
     const events = this.expandPayload(scrubbed);

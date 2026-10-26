@@ -29,6 +29,30 @@ async function bootstrap() {
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
     new FastifyAdapter(),
+    { bodyParser: false },
+  );
+
+  // Console DELETE / token revoke send JSON content-type with an empty body.
+  // Fastify's default parser rejects that. Nest must not register it again.
+  const fastify = app.getHttpAdapter().getInstance();
+  fastify.removeContentTypeParser('application/json');
+  fastify.addContentTypeParser(
+    'application/json',
+    { parseAs: 'string' },
+    (_request, body, done) => {
+      const text = typeof body === 'string' ? body : '';
+      if (!text.trim()) {
+        done(null, {});
+        return;
+      }
+      try {
+        done(null, JSON.parse(text) as unknown);
+      } catch (err) {
+        const error = err instanceof Error ? err : new Error(String(err));
+        (error as Error & { statusCode?: number }).statusCode = 400;
+        done(error, undefined);
+      }
+    },
   );
 
   app.enableCors({
@@ -38,4 +62,5 @@ async function bootstrap() {
 
   await app.listen(process.env.PORT ?? 3000, '0.0.0.0');
 }
-bootstrap();
+
+void bootstrap();

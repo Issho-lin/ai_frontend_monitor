@@ -9,9 +9,16 @@ import { ListingsService } from './listings/listings.service';
 import { OverviewController } from './overview/overview.controller';
 import { OverviewService } from './overview/overview.service';
 import { IssuesModule } from './issues/issues.module';
+import { ProjectsModule } from './projects/projects.module';
 
 @Module({
-  imports: [AlertsModule, TasksModule, ReleasesModule, IssuesModule],
+  imports: [
+    AlertsModule,
+    TasksModule,
+    ReleasesModule,
+    IssuesModule,
+    ProjectsModule,
+  ],
   controllers: [AppController, OverviewController, ListingsController],
   providers: [AppService, OverviewService, ListingsService],
 })
