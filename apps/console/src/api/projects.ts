@@ -1,17 +1,17 @@
 /**
- * Console 项目 / Token API 层
+ * Console 项目 / Token API 层 —— M5 最小集（docs/M5-projects-console.md）
  *
- * 产品契约（已认）：
+ * 产品契约：
  * - ingest：请求头 `x-project-token` + body/query 中的 `projectId`
- * - Console：项目 CRUD；Token 生成/吊销；明文只展示一次，服务端仅存 hash
+ * - Console：建项目；发/轮换/吊销 Token；明文只展示一次，服务端仅存 hash
  *
- * TODO(backend): 下列路径待后端落地后，将 USE_PROJECTS_MOCK 改为 false。
+ * TODO(backend): 下列路径落地后将 USE_PROJECTS_MOCK 改为 false。
  *   GET    /api/v1/projects
- *   POST   /api/v1/projects
- *   PATCH  /api/v1/projects/:id
+ *   POST   /api/v1/projects                 body: { id, name, env }
+ *   PATCH  /api/v1/projects/:id             body: { name?, env? }
  *   DELETE /api/v1/projects/:id
- *   GET    /api/v1/projects/:id/tokens
- *   POST   /api/v1/projects/:id/tokens
+ *   GET    /api/v1/projects/:id/tokens      仅掩码
+ *   POST   /api/v1/projects/:id/tokens      响应仅此一次含 tokenPlain
  *   POST   /api/v1/projects/:id/tokens/:tokenId/revoke
  */
 
@@ -58,7 +58,7 @@ export type CreateTokenResult = {
   tokenPlain: string
 }
 
-/** 后端未就绪前走本地 mock；接真路由后改为 false */
+/** 后端未就绪（本机 GET /api/v1/projects 仍 404）；接真后改为 false */
 export const USE_PROJECTS_MOCK = true
 
 const ENV_LABEL: Record<ProjectEnv, string> = {

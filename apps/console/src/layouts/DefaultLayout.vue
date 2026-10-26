@@ -14,10 +14,12 @@ import {
   Expand,
   Search,
   User,
+  Setting,
 } from '@element-plus/icons-vue'
 import logoMark from '@/assets/logo-mark.svg'
 import { monitorSearch } from '@/composables/monitorSearch'
 import { useFiltersStore } from '@/stores/filters'
+import { listProjects } from '@/api/projects'
 
 const route = useRoute()
 const router = useRouter()
@@ -168,7 +170,21 @@ async function loadVersions() {
   }
 }
 
+
+async function loadFilterProjects() {
+  try {
+    const rows = await listProjects()
+    projects.value = rows.map((p) => ({ id: p.id, name: p.name }))
+    if (!projects.value.some((p) => p.id === currentProject.value) && projects.value[0]) {
+      currentProject.value = projects.value[0].id
+    }
+  } catch {
+    // 顶栏保留现有占位；项目页会再拉一次
+  }
+}
+
 onMounted(() => {
+  void loadFilterProjects()
   void loadVersions()
   void loadAlertCount()
   document.addEventListener('pointerdown', onPointerDown)
@@ -223,6 +239,10 @@ const pageTitle = computed(() => (route.meta?.title as string | undefined) ?? ''
         <el-menu-item v-for="item in workbenchItems" :key="item.key" :index="item.name">
           <el-icon class="nav-icon"><component :is="item.icon" /></el-icon>
           <template #title>{{ item.label }}</template>
+        </el-menu-item>
+        <el-menu-item index="projects">
+          <el-icon class="nav-icon"><Setting /></el-icon>
+          <template #title>项目</template>
         </el-menu-item>
         <el-menu-item index="docs">
           <el-icon class="nav-icon"><Document /></el-icon>

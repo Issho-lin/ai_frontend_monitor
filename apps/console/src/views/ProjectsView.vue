@@ -233,6 +233,36 @@ async function revokeToken(row: ProjectToken) {
   }
 }
 
+
+async function rotateToken(row: ProjectToken) {
+  if (!selectedId.value || !row.enabled) return
+  try {
+    await ElMessageBox.confirm(
+      `将为「${row.name}」生成新 Token，并吊销当前掩码 ${row.tokenMasked}。新明文只展示一次。`,
+      '轮换 Token',
+      { type: 'warning', confirmButtonText: '轮换', cancelButtonText: '取消' },
+    )
+  } catch {
+    return
+  }
+  tokenSaving.value = true
+  try {
+    const result = await createProjectToken(selectedId.value, {
+      name: row.name || undefined,
+    })
+    await revokeProjectToken(selectedId.value, row.id)
+    plainToken.value = result.tokenPlain
+    plainCopied.value = false
+    plainDialog.value = true
+    await loadTokens()
+    ElMessage.success('已轮换：旧 Token 已吊销')
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : '轮换失败')
+  } finally {
+    tokenSaving.value = false
+  }
+}
+
 function formatTime(value: string | null): string {
   if (!value) return '—'
   try {
@@ -252,7 +282,7 @@ function formatTime(value: string | null): string {
       show-icon
       :closable="false"
       title="当前为 Mock 数据"
-      description="后端项目/Token 路由尚未就绪。API 层已按 /api/v1/projects、/api/v1/projects/:id/tokens 写好，接真后将 apps/console/src/api/projects.ts 中 USE_PROJECTS_MOCK 改为 false。"
+      description="M5：后端项目/Token 路由尚未就绪。路径已按 docs/M5-projects-console.md 对齐；接真后将 USE_PROJECTS_MOCK 改为 false。"
     />
 
     <div class="layout">
@@ -367,8 +397,18 @@ function formatTime(value: string | null): string {
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="100" fixed="right">
+          <el-table-column label="操作" width="140" fixed="right">
             <template #default="{ row }">
+              <el-button
+                size="small"
+                link
+                type="primary"
+                :disabled="!row.enabled"
+                :loading="tokenSaving"
+                @click="rotateToken(row)"
+              >
+                轮换
+              </el-button>
               <el-button
                 size="small"
                 link
