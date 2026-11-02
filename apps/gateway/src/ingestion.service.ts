@@ -5,6 +5,7 @@ import { AuthService } from './auth.service';
 import { QueueService } from './queue.service';
 import { SimpleRateLimiter } from './rate-limit';
 import { redactIngestFields } from './redact';
+import { isAcceptedWebVital } from './vital-bounds';
 
 @Injectable()
 export class IngestionService {
@@ -70,11 +71,16 @@ export class IngestionService {
         continue;
       }
 
+      const name = metricName.toUpperCase();
+      if (!isAcceptedWebVital(name, value)) {
+        continue;
+      }
+
       events.push({
         ...baseEvent,
         event_id: randomUUID(),
         event_type: 'web_vital',
-        metric_name: metricName.toUpperCase(),
+        metric_name: name,
         metric_value: value,
         duration: value,
       });

@@ -66,6 +66,8 @@ const ERROR_FREE_TARGET = 99.5;
 const API_SUCCESS_TARGET = 99.5;
 const BLANK_TARGET = 0.05;
 const PASS_TARGET = 75;
+/** Same cap as gateway ingest. Excludes long-lived SPA time-origin samples from P75. CLS is not capped. */
+const MAX_TIMING_VITAL_MS = 60_000;
 
 @Injectable()
 export class OverviewService {
@@ -140,8 +142,8 @@ export class OverviewService {
             ))
           )) AS affected_users,
           uniqExactIf(user_id_hash, user_id_hash != '') AS visitors,
-          quantileIf(0.75)(metric_value, event_type = 'web_vital' AND metric_name = 'LCP') AS lcp_p75,
-          countIf(event_type = 'web_vital' AND metric_name = 'LCP') AS lcp_count,
+          quantileIf(0.75)(metric_value, event_type = 'web_vital' AND metric_name = 'LCP' AND metric_value <= ${MAX_TIMING_VITAL_MS}) AS lcp_p75,
+          countIf(event_type = 'web_vital' AND metric_name = 'LCP' AND metric_value <= ${MAX_TIMING_VITAL_MS}) AS lcp_count,
           countIf(event_type = 'api_timing') AS api_count,
           countIf(
             event_type = 'api_timing'
@@ -204,16 +206,16 @@ export class OverviewService {
       query: `
         SELECT
           countIf(event_type = 'page_view') AS pv,
-          quantileIf(0.75)(metric_value, event_type = 'web_vital' AND metric_name = 'LCP') AS lcp_p75,
-          countIf(event_type = 'web_vital' AND metric_name = 'LCP') AS lcp_n,
-          quantileIf(0.75)(metric_value, event_type = 'web_vital' AND metric_name = 'FCP') AS fcp_p75,
-          countIf(event_type = 'web_vital' AND metric_name = 'FCP') AS fcp_n,
-          quantileIf(0.75)(metric_value, event_type = 'web_vital' AND metric_name = 'INP') AS inp_p75,
-          countIf(event_type = 'web_vital' AND metric_name = 'INP') AS inp_n,
+          quantileIf(0.75)(metric_value, event_type = 'web_vital' AND metric_name = 'LCP' AND metric_value <= ${MAX_TIMING_VITAL_MS}) AS lcp_p75,
+          countIf(event_type = 'web_vital' AND metric_name = 'LCP' AND metric_value <= ${MAX_TIMING_VITAL_MS}) AS lcp_n,
+          quantileIf(0.75)(metric_value, event_type = 'web_vital' AND metric_name = 'FCP' AND metric_value <= ${MAX_TIMING_VITAL_MS}) AS fcp_p75,
+          countIf(event_type = 'web_vital' AND metric_name = 'FCP' AND metric_value <= ${MAX_TIMING_VITAL_MS}) AS fcp_n,
+          quantileIf(0.75)(metric_value, event_type = 'web_vital' AND metric_name = 'INP' AND metric_value <= ${MAX_TIMING_VITAL_MS}) AS inp_p75,
+          countIf(event_type = 'web_vital' AND metric_name = 'INP' AND metric_value <= ${MAX_TIMING_VITAL_MS}) AS inp_n,
           quantileIf(0.75)(metric_value, event_type = 'web_vital' AND metric_name = 'CLS') AS cls_p75,
           countIf(event_type = 'web_vital' AND metric_name = 'CLS') AS cls_n,
-          quantileIf(0.75)(metric_value, event_type = 'web_vital' AND metric_name = 'TTFB') AS ttfb_p75,
-          countIf(event_type = 'web_vital' AND metric_name = 'TTFB') AS ttfb_n,
+          quantileIf(0.75)(metric_value, event_type = 'web_vital' AND metric_name = 'TTFB' AND metric_value <= ${MAX_TIMING_VITAL_MS}) AS ttfb_p75,
+          countIf(event_type = 'web_vital' AND metric_name = 'TTFB' AND metric_value <= ${MAX_TIMING_VITAL_MS}) AS ttfb_n,
           countIf(event_type = 'api_timing') AS api_count,
           countIf(
             event_type = 'api_timing'
@@ -538,6 +540,7 @@ export class OverviewService {
           AND ({browser:String} = '' OR browser = {browser:String})
           AND event_type = 'web_vital'
           AND metric_name = {metricName:String}
+          AND ({metricName:String} = 'CLS' OR metric_value <= ${MAX_TIMING_VITAL_MS})
           AND timestamp >= now() - INTERVAL {hours:UInt32} HOUR
         GROUP BY ${grain.expr}
         ORDER BY ${grain.expr} ASC

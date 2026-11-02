@@ -5,6 +5,9 @@ import { formatMetricValue, isGoodMetric } from '@ai-frontend-monitor/schema';
 type PageTrend = 'up' | 'down' | 'flat';
 type ErrorKind = 'js' | 'promise' | 'resource';
 
+/** Same cap as gateway ingest and Overview. CLS stays uncapped. */
+const MAX_TIMING_VITAL_MS = 60_000;
+
 const AFFECTED_USERS = `
   uniqExactIf(user_id_hash, user_id_hash != '' AND (
     event_type = 'error'
@@ -168,18 +171,18 @@ export class ListingsService {
           route,
           countIf(event_type = 'page_view') AS pv,
           ${AFFECTED_USERS},
-          quantileIf(0.75)(metric_value, event_type = 'web_vital' AND metric_name = 'LCP') AS lcp_p75,
-          quantileIf(0.75)(metric_value, event_type = 'web_vital' AND metric_name = 'FCP') AS fcp_p75,
-          quantileIf(0.75)(metric_value, event_type = 'web_vital' AND metric_name = 'INP') AS inp_p75,
+          quantileIf(0.75)(metric_value, event_type = 'web_vital' AND metric_name = 'LCP' AND metric_value <= ${MAX_TIMING_VITAL_MS}) AS lcp_p75,
+          quantileIf(0.75)(metric_value, event_type = 'web_vital' AND metric_name = 'FCP' AND metric_value <= ${MAX_TIMING_VITAL_MS}) AS fcp_p75,
+          quantileIf(0.75)(metric_value, event_type = 'web_vital' AND metric_name = 'INP' AND metric_value <= ${MAX_TIMING_VITAL_MS}) AS inp_p75,
           quantileIf(0.75)(metric_value, event_type = 'web_vital' AND metric_name = 'CLS') AS cls_p75,
-          quantileIf(0.75)(metric_value, event_type = 'web_vital' AND metric_name = 'TTFB') AS ttfb_p75,
+          quantileIf(0.75)(metric_value, event_type = 'web_vital' AND metric_name = 'TTFB' AND metric_value <= ${MAX_TIMING_VITAL_MS}) AS ttfb_p75,
           (countIf(event_type = 'error') / nullIf(countIf(event_type = 'page_view'), 0)) * 100 AS js_error_rate,
           quantileIf(0.95)(duration, event_type = 'api_timing') AS api_p95,
-          countIf(event_type = 'web_vital' AND metric_name = 'LCP') AS lcp_n,
-          countIf(event_type = 'web_vital' AND metric_name = 'FCP') AS fcp_n,
-          countIf(event_type = 'web_vital' AND metric_name = 'INP') AS inp_n,
+          countIf(event_type = 'web_vital' AND metric_name = 'LCP' AND metric_value <= ${MAX_TIMING_VITAL_MS}) AS lcp_n,
+          countIf(event_type = 'web_vital' AND metric_name = 'FCP' AND metric_value <= ${MAX_TIMING_VITAL_MS}) AS fcp_n,
+          countIf(event_type = 'web_vital' AND metric_name = 'INP' AND metric_value <= ${MAX_TIMING_VITAL_MS}) AS inp_n,
           countIf(event_type = 'web_vital' AND metric_name = 'CLS') AS cls_n,
-          countIf(event_type = 'web_vital' AND metric_name = 'TTFB') AS ttfb_n,
+          countIf(event_type = 'web_vital' AND metric_name = 'TTFB' AND metric_value <= ${MAX_TIMING_VITAL_MS}) AS ttfb_n,
           countIf(event_type = 'api_timing') AS api_n
         FROM afm.rum_events
         WHERE project_id = {projectId:String}
@@ -591,18 +594,18 @@ export class ListingsService {
           route,
           countIf(event_type = 'page_view') AS pv,
           ${AFFECTED_USERS},
-          quantileIf(0.75)(metric_value, event_type = 'web_vital' AND metric_name = 'LCP') AS lcp_p75,
-          quantileIf(0.75)(metric_value, event_type = 'web_vital' AND metric_name = 'FCP') AS fcp_p75,
-          quantileIf(0.75)(metric_value, event_type = 'web_vital' AND metric_name = 'INP') AS inp_p75,
+          quantileIf(0.75)(metric_value, event_type = 'web_vital' AND metric_name = 'LCP' AND metric_value <= ${MAX_TIMING_VITAL_MS}) AS lcp_p75,
+          quantileIf(0.75)(metric_value, event_type = 'web_vital' AND metric_name = 'FCP' AND metric_value <= ${MAX_TIMING_VITAL_MS}) AS fcp_p75,
+          quantileIf(0.75)(metric_value, event_type = 'web_vital' AND metric_name = 'INP' AND metric_value <= ${MAX_TIMING_VITAL_MS}) AS inp_p75,
           quantileIf(0.75)(metric_value, event_type = 'web_vital' AND metric_name = 'CLS') AS cls_p75,
-          quantileIf(0.75)(metric_value, event_type = 'web_vital' AND metric_name = 'TTFB') AS ttfb_p75,
+          quantileIf(0.75)(metric_value, event_type = 'web_vital' AND metric_name = 'TTFB' AND metric_value <= ${MAX_TIMING_VITAL_MS}) AS ttfb_p75,
           (countIf(event_type = 'error') / nullIf(countIf(event_type = 'page_view'), 0)) * 100 AS js_error_rate,
           quantileIf(0.95)(duration, event_type = 'api_timing') AS api_p95,
-          countIf(event_type = 'web_vital' AND metric_name = 'LCP') AS lcp_n,
-          countIf(event_type = 'web_vital' AND metric_name = 'FCP') AS fcp_n,
-          countIf(event_type = 'web_vital' AND metric_name = 'INP') AS inp_n,
+          countIf(event_type = 'web_vital' AND metric_name = 'LCP' AND metric_value <= ${MAX_TIMING_VITAL_MS}) AS lcp_n,
+          countIf(event_type = 'web_vital' AND metric_name = 'FCP' AND metric_value <= ${MAX_TIMING_VITAL_MS}) AS fcp_n,
+          countIf(event_type = 'web_vital' AND metric_name = 'INP' AND metric_value <= ${MAX_TIMING_VITAL_MS}) AS inp_n,
           countIf(event_type = 'web_vital' AND metric_name = 'CLS') AS cls_n,
-          countIf(event_type = 'web_vital' AND metric_name = 'TTFB') AS ttfb_n,
+          countIf(event_type = 'web_vital' AND metric_name = 'TTFB' AND metric_value <= ${MAX_TIMING_VITAL_MS}) AS ttfb_n,
           countIf(event_type = 'api_timing') AS api_n
         FROM afm.rum_events
         WHERE project_id = {projectId:String}
@@ -752,7 +755,7 @@ export class ListingsService {
           countIf(event_type = 'error') AS error_count,
           formatDateTime(min(timestamp), '%Y-%m-%d %H:%i:%S') AS started_at,
           formatDateTime(max(timestamp), '%Y-%m-%d %H:%i:%S') AS ended_at,
-          quantileIf(0.75)(metric_value, event_type = 'web_vital' AND metric_name = 'LCP') AS lcp_p75
+          quantileIf(0.75)(metric_value, event_type = 'web_vital' AND metric_name = 'LCP' AND metric_value <= ${MAX_TIMING_VITAL_MS}) AS lcp_p75
         FROM afm.rum_events
         WHERE project_id = {projectId:String}
           AND env = {env:String}
