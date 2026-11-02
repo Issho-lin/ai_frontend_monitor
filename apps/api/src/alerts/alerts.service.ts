@@ -72,6 +72,8 @@ const API_RULE_ID = RULE_ID_API;
 const MIN_ERROR_SESSIONS = 5;
 const MIN_API_REQUESTS = 20;
 const LOOKBACK_MINUTES = 10;
+/** Same cap as gateway ingest. Long-lived SPA time-origin samples must not set LCP P75. */
+const MAX_TIMING_VITAL_MS = 60_000;
 const MIN_SAMPLES = 1;
 const LCP_THRESHOLD_MS = METRIC_SPECS.LCP.goodAt;
 const LCP_S0_MS = 4000;
@@ -715,6 +717,7 @@ export class AlertsService implements OnModuleInit, OnModuleDestroy {
           AND env = {env:String}
           AND event_type = 'web_vital'
           AND metric_name = 'LCP'
+          AND metric_value <= ${MAX_TIMING_VITAL_MS}
           AND timestamp >= now() - INTERVAL ${LOOKBACK_MINUTES} MINUTE
         GROUP BY route
         HAVING lcp_p75 > {threshold:Float64}
@@ -744,6 +747,7 @@ export class AlertsService implements OnModuleInit, OnModuleDestroy {
           AND env = {env:String}
           AND event_type = 'web_vital'
           AND metric_name = 'LCP'
+          AND metric_value <= ${MAX_TIMING_VITAL_MS}
           AND timestamp >= now() - INTERVAL 24 HOUR
           AND timestamp < now() - INTERVAL ${LOOKBACK_MINUTES} MINUTE
         GROUP BY route
